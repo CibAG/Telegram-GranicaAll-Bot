@@ -13,13 +13,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sessions_lock = threading.Lock()
-# chat_id -> {"thread": Thread, "stop_event": Event, "interval": int}
 sessions: dict[int, dict] = {}
 
 
 def load_config(path="bot_config.json"):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 
 config = load_config()
@@ -35,6 +36,16 @@ CHECKPOINT = config.get("checkpoint_id")
 QUERY_TOKEN = config.get("query_token", "test")
 
 bot = telebot.TeleBot(API_TOKEN)
+
+# --- FLASK СЕРВЕР ДЛЯ RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
 
 
 def get_main_keyboard():
@@ -92,7 +103,6 @@ def fetch_data():
         stats_hour = stats.get("carLastHour", 0) or 0
         stats_day = stats.get("carLastDay", 0) or 0
 
-        # Оценка для новой записи: очередь / темп пропуска
         if total == 0:
             estimate_minutes = 0
         elif stats_hour > 0:
@@ -116,7 +126,6 @@ def fetch_data():
 
 
 def format_estimate_html(minutes):
-    """Время оценки: синий (ссылка), жирный, подчёркнутый."""
     if minutes is None:
         text = "н/д (нет данных о пропуске)"
     else:
@@ -152,6 +161,7 @@ def build_report(d):
 
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
     while not stop_event.is_set():
+        # Сначала сразу отправляем отчет при старте
         data = fetch_data()
         if "error" in data:
             bot.send_message(
@@ -166,6 +176,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 disable_web_page_preview=True,
             )
 
+        # Затем ждем заданный интервал, проверяя остановку каждую секунду
         for _ in range(interval * 60):
             if stop_event.is_set():
                 break
@@ -173,7 +184,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
 
 
 def start_monitoring(chat_id: int, interval: int) -> bool:
-    """Запускает мониторинг для чата. False, если уже активен."""
     with sessions_lock:
         if is_monitoring(chat_id):
             return False
@@ -194,7 +204,6 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
 
 
 def stop_monitoring(chat_id: int) -> bool:
-    """Останавливает мониторинг чата. False, если не был активен."""
     with sessions_lock:
         session = sessions.get(chat_id)
         if not session or not session["thread"].is_alive():
@@ -231,15 +240,18 @@ def start(message):
 
     bot.send_message(
         chat_id,
-        "🚀 **Мониторинг границы Брест**\nВыберите интервал опроса:",
+        "🚀 <b>Мониторинг границы Брест</b>\nВыберите интервал опроса:",
         reply_markup=markup,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "int_10")
 def set_10(call):
-    bot.answer_callback_query(call.id)
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
     chat_id = call.message.chat.id
 
     if not start_monitoring(chat_id, 10):
@@ -252,14 +264,17 @@ def set_10(call):
 
     bot.send_message(
         chat_id,
-        "✅ Запуск: каждые 10 минут",
+        "✅ Запуск: каждые 10 минут. Первый отчет отправляется...",
         reply_markup=get_main_keyboard(),
     )
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "int_custom")
 def set_custom(call):
-    bot.answer_callback_query(call.id)
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
     chat_id = call.message.chat.id
 
     with sessions_lock:
@@ -272,7 +287,7 @@ def set_custom(call):
             return
 
     msg = bot.send_message(
-        chat_id, "✍️ Введите количество **минут** (число):", parse_mode="Markdown"
+        chat_id, "✍️ Введите количество <b>минут</b> (число):", parse_mode="HTML"
     )
     bot.register_next_step_handler(msg, process_custom_step)
 
@@ -299,7 +314,7 @@ def process_custom_step(message):
 
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {minutes} мин.",
+        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...",
         reply_markup=get_main_keyboard(),
     )
 
@@ -311,9 +326,9 @@ def stop(message):
     if stop_monitoring(chat_id):
         bot.reply_to(
             message,
-            "🛑 **Мониторинг остановлен.**",
+            "🛑 <b>Мониторинг остановлен.</b>",
             reply_markup=get_main_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         bot.reply_to(
@@ -324,7 +339,9 @@ def stop(message):
 
 
 if __name__ == "__main__":
-    print("Ochistka staryh sessiy i zapusk...")
+    # Запускаем Flask-сервер в фоновом потоке ДО запуска бота
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("Flask server started in background thread.")
 
     try:
         requests.get(
@@ -341,16 +358,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[{datetime.now()}] Error: {e}. Restart in 5s...")
             time.sleep(5)
-
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=10000)
-
-# Запускаем Flask в отдельном потоке, чтобы он не мешал основному циклу бота
-threading.Thread(target=run_flask, daemon=True).start()
