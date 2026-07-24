@@ -344,7 +344,7 @@ def stop(message):
         )
 
 
-# Безопасный обработчик для поиска машины по номеру
+# Исправленный обработчик поиска машины по номеру (проверяет правильный ключ 'number')
 @bot.message_handler(func=lambda message: message.text and message.text not in ["🚀 Старт", "🛑 Стоп"] and not message.text.startswith("/"))
 def handle_car_search(message):
     chat_id = message.chat.id
@@ -366,14 +366,20 @@ def handle_car_search(message):
     position = -1
 
     for idx, car in enumerate(cars, start=1):
-        car_number = str(car.get("nzp") or car.get("number") or car.get("reg_number") or "").replace(" ", "").lower()
+        car_number = str(
+            car.get("number") or 
+            car.get("nzp") or 
+            car.get("reg_number") or 
+            car.get("carNumber") or ""
+        ).replace(" ", "").lower()
+        
         if search_query in car_number or search_query == car_number:
             found_car = car
             position = idx
             break
 
     if found_car:
-        reg_num = found_car.get("nzp") or found_car.get("number") or found_car.get("reg_number") or text
+        reg_num = found_car.get("number") or found_car.get("nzp") or found_car.get("reg_number") or text
         reg_date = found_car.get("registration_date", "-")
         response_text = (
             f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
