@@ -1,4 +1,5 @@
 from datetime import datetime
+import html
 import json
 import os
 import threading
@@ -113,28 +114,38 @@ def fetch_data():
         return {"error": str(e)}
 
 
-def format_minutes(minutes):
+def format_estimate_html(minutes):
+    """Время оценки: синий (ссылка), жирный, подчёркнутый."""
     if minutes is None:
-        return "н/д (нет данных о пропуске)"
-    hours, mins = divmod(max(0, minutes), 60)
-    if hours:
-        return f"{minutes} мин. (~{hours} ч {mins} мин.)"
-    return f"{minutes} мин."
+        text = "н/д (нет данных о пропуске)"
+    else:
+        hours, mins = divmod(max(0, minutes), 60)
+        if hours:
+            text = f"{minutes} мин. (~{hours} ч {mins} мин.)"
+        else:
+            text = f"{minutes} мин."
+
+    safe = html.escape(text)
+    return (
+        f'<a href="https://mon.declarant.by/#/zone/brest-bts">'
+        f"<b><u>{safe}</u></b></a>"
+    )
 
 
 def build_report(d):
     return (
-        f"📊 **Мониторинг границы Брест**\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🚗 Машин в очереди: {d['total']}\n"
-        f"🕒 Первая стоит: {d['wait']} мин.\n"
-        f"⏳ Оценка для вас: {format_minutes(d['estimate'])}\n"
-        f"📉 За час: {d['stats_hour']} маш.\n"
-        f"📅 За сутки: {d['stats_day']} маш.\n"
-        f"📅 Дата 1-го авто: {d['reg_date']}\n"
-        f"🔄 Статус изменён: {d['changed']}\n"
-        f"🔗 [Сайт мониторинга Брест](https://mon.declarant.by/#/zone/brest-bts)\n"
-        f"━━━━━━━━━━━━━━━\n"
+        "📊 <b>Мониторинг границы Брест</b>\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
+        f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
+        f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
+        f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
+        f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
+        f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
+        f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
+        '🔗 <a href="https://mon.declarant.by/#/zone/brest-bts">'
+        "Сайт мониторинга Брест</a>\n"
+        "━━━━━━━━━━━━━━━\n"
     )
 
 
@@ -150,7 +161,8 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
             bot.send_message(
                 chat_id,
                 build_report(data),
-                parse_mode="Markdown",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
             )
 
         for _ in range(interval * 60):
