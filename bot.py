@@ -87,6 +87,7 @@ def fetch_data():
 
         cars = queue.get("carLiveQueue", [])
         
+        # Сортируем машины от самой первой по дате регистрации
         sorted_cars = []
         if cars:
             sorted_cars = sorted(
@@ -100,6 +101,7 @@ def fetch_data():
                 first["registration_date"], "%H:%M:%S %d.%m.%Y"
             )
             
+            # Учитываем белорусскую таймзону (UTC+3) против серверного UTC
             by_timezone = timezone(timedelta(hours=3))
             now_by = datetime.now(by_timezone).replace(tzinfo=None)
             
@@ -342,17 +344,14 @@ def stop(message):
         )
 
 
-# Прямой обработчик текстов без сложных условий для проверки
+# Обработчик поиска машины по номеру с использованием поля 'regnum'
 @bot.message_handler(content_types=['text'])
 def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    # Пропускаем управляющие кнопки меню
     if text in ["🚀 Старт", "🛑 Стоп"]:
         return
-
-    print(f"DEBUG: Получен текст для поиска: '{text}' от чата {chat_id}")
 
     with sessions_lock:
         session = sessions.get(chat_id)
@@ -371,10 +370,10 @@ def handle_car_search(message):
 
     for idx, car in enumerate(cars, start=1):
         car_number = str(
+            car.get("regnum") or 
             car.get("number") or 
             car.get("nzp") or 
-            car.get("reg_number") or 
-            car.get("carNumber") or ""
+            car.get("reg_number") or ""
         ).replace(" ", "").lower()
         
         if search_query in car_number or search_query == car_number:
@@ -383,7 +382,7 @@ def handle_car_search(message):
             break
 
     if found_car:
-        reg_num = found_car.get("number") or found_car.get("nzp") or found_car.get("reg_number") or text
+        reg_num = found_car.get("regnum") or found_car.get("number") or found_car.get("nzp") or text
         reg_date = found_car.get("registration_date", "-")
         response_text = (
             f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
