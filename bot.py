@@ -86,13 +86,17 @@ def fetch_data():
         ).json()
 
         cars = queue.get("carLiveQueue", [])
+        
+        # Сортируем машины точно так же, как они идут в очереди (от самой первой по дате регистрации)
+        sorted_cars = []
         if cars:
-            first = min(
+            sorted_cars = sorted(
                 cars,
                 key=lambda x: datetime.strptime(
                     x["registration_date"], "%H:%M:%S %d.%m.%Y"
                 ),
             )
+            first = sorted_cars[0]
             reg_time = datetime.strptime(
                 first["registration_date"], "%H:%M:%S %d.%m.%Y"
             )
@@ -114,7 +118,7 @@ def fetch_data():
             changed_date = "-"
             wait_minutes = 0
 
-        total = len(cars)
+        total = len(sorted_cars)
         stats_hour = stats.get("carLastHour", 0) or 0
         stats_day = stats.get("carLastDay", 0) or 0
 
@@ -135,6 +139,7 @@ def fetch_data():
             "changed": changed_date,
             "wait": wait_minutes,
             "estimate": estimate_minutes,
+            "sorted_cars": sorted_cars  # Сохраняем отсортированный список для поиска
         }
     except Exception as e:
         return {"error": str(e)}
@@ -164,7 +169,8 @@ def build_report(d):
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
-        "━━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━━\n"
+        "💡 <i>Просто отправьте номер машины в чат, чтобы узнать её позицию в очереди!</i>"
     )
 
 
@@ -174,6 +180,11 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
         if "error" in data:
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
+            # Сохраняем актуальный список машин в сессию для поиска по номеру
+            with sessions_lock:
+                if chat_id in sessions:
+                    sessions[chat_id]["last_cars"] = data.get("sorted_cars", [])
+
             bot.send_message(
                 chat_id,
                 build_report(data),
@@ -201,6 +212,7 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
             "thread": thread,
             "stop_event": stop_event,
             "interval": interval,
+            "last_cars": []
         }
         thread.start()
         return True
@@ -331,6 +343,59 @@ def stop(message):
             "⚠️ Мониторинг не активен.",
             reply_markup=get_main_keyboard(),
         )
+
+
+# Обработчик произвольного текста (поиск машины по номеру)
+@bot.message_handler(func=lambda message: True)
+def handle_car_search(message):
+    chat_id = message.chat.id
+    text = message.text.strip()
+
+    # Игнорируем кнопки меню
+    if text in ["🚀 Старт", "🛑 Стоп"]:
+        return
+
+    with sessions_lock:
+        session = sessions.get(chat_id)
+        if not session or not session.get("last_cars"):
+            bot.reply_to(
+                message,
+                "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт», чтобы загрузить актуальную очередь.",
+                reply_markup=get_main_keyboard()
+            )
+            return
+        cars = session["last_cars"]
+
+    # Ищем машину по полю рег. номера (регистронезависимо и без учета пробелов)
+    search_query = text.replace(" ", "").lower()
+    found_car = None
+    position = -1
+
+    for idx, car in enumerate(cars, start=1):
+        # Поле номера в JSON обычно называется "nzp" или аналогично (проверим оба варианта: nzp / number / reg_number)
+        car_number = str(car.get("nzp") or car.get("number") or car.get("reg_number") or "").replace(" ", "").lower()
+        if search_query in car_number or search_query == car_number:
+            found_car = car
+            position = idx
+            break
+
+    if found_car:
+        reg_num = found_car.get("nzp") or found_car.get("number") or found_car.get("reg_number") or text
+        reg_date = found_car.get("registration_date", "-")
+        response_text = (
+            f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🚗 <b>Позиция в очереди:</b> <b>{position}</b>-я с начала\n"
+            f"📅 <b>Дата регистрации:</b> {html.escape(str(reg_date))}\n"
+            f"━━━━━━━━━━━━━━━"
+        )
+    else:
+        response_text = (
+            f"❌ Машина с номером <b>{html.escape(text)}</b> не найдена в текущей активной очереди.\n"
+            "Убедитесь, что номер введен правильно (или попробуйте ввести часть номера)."
+        )
+
+    bot.reply_to(message, response_text, parse_mode="HTML")
 
 
 _bot_initialized = False
