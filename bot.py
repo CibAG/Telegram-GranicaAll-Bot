@@ -40,12 +40,14 @@ bot = telebot.TeleBot(API_TOKEN)
 # --- FLASK СЕРВЕР ДЛЯ RENDER ---
 app = Flask(__name__)
 
-@app.route('/')
+
+@app.route("/")
 def home():
     return "Bot is running!"
 
+
 def run_flask():
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host="0.0.0.0", port=10000)
 
 
 def get_main_keyboard():
@@ -65,16 +67,21 @@ def is_monitoring(chat_id: int) -> bool:
 
 def fetch_data():
     try:
+        # Явно отключаем прокси, чтобы Render не заворачивал запросы
+        proxies = {"http": None, "https": None}
+
         stats = requests.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
+            proxies=proxies,
         ).json()
 
         queue = requests.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
+            proxies=proxies,
         ).json()
 
         cars = queue.get("carLiveQueue", [])
@@ -161,7 +168,6 @@ def build_report(d):
 
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
     while not stop_event.is_set():
-        # Сначала сразу отправляем отчет при старте
         data = fetch_data()
         if "error" in data:
             bot.send_message(
@@ -176,7 +182,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 disable_web_page_preview=True,
             )
 
-        # Затем ждем заданный интервал, проверяя остановку каждую секунду
         for _ in range(interval * 60):
             if stop_event.is_set():
                 break
@@ -339,7 +344,6 @@ def stop(message):
 
 
 if __name__ == "__main__":
-    # Запускаем Flask-сервер в фоновом потоке ДО запуска бота
     threading.Thread(target=run_flask, daemon=True).start()
     print("Flask server started in background thread.")
 
