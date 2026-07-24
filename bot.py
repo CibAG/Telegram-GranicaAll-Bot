@@ -26,10 +26,7 @@ def load_config(path="bot_config.json"):
 config = load_config()
 API_TOKEN = os.getenv("API_TOKEN") or config.get("api_token")
 if not API_TOKEN:
-    raise SystemExit(
-        "API_TOKEN не задан. Создайте файл .env (см. .env.example) "
-        "или задайте переменную окружения API_TOKEN."
-    )
+    raise SystemExit("API_TOKEN не задан.")
 
 BASE = config.get("base_url", "https://belarusborder.by/info")
 CHECKPOINT = config.get("checkpoint_id")
@@ -37,7 +34,6 @@ QUERY_TOKEN = config.get("query_token", "test")
 
 bot = telebot.TeleBot(API_TOKEN)
 
-# --- FLASK СЕРВЕР ДЛЯ RENDER ---
 app = Flask(__name__)
 
 
@@ -50,9 +46,10 @@ def get_main_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, row_width=2
     )
-    btn_start = telebot.types.KeyboardButton("🚀 Старт")
-    btn_stop = telebot.types.KeyboardButton("🛑 Стоп")
-    markup.add(btn_start, btn_stop)
+    markup.add(
+        telebot.types.KeyboardButton("🚀 Старт"),
+        telebot.types.KeyboardButton("🛑 Стоп"),
+    )
     return markup
 
 
@@ -64,14 +61,12 @@ def is_monitoring(chat_id: int) -> bool:
 def fetch_data():
     try:
         proxies = {"http": None, "https": None}
-
         stats = requests.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=proxies,
         ).json()
-
         queue = requests.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
@@ -80,7 +75,6 @@ def fetch_data():
         ).json()
 
         cars = queue.get("carLiveQueue", [])
-
         if cars:
             first = min(
                 cars,
@@ -129,18 +123,17 @@ def fetch_data():
 
 def format_estimate_html(minutes):
     if minutes is None:
-        text = "н/д (нет данных о пропуске)"
+        text = "н/д"
     else:
         hours, mins = divmod(max(0, minutes), 60)
-        if hours:
-            text = f"{minutes} мин. (~{hours} ч {mins} мин.)"
-        else:
-            text = f"{minutes} мин."
-
-    safe = html.escape(text)
+        text = (
+            f"{minutes} мин. (~{hours} ч {mins} мин.)"
+            if hours
+            else f"{minutes} мин."
+        )
     return (
         f'<a href="https://mon.declarant.by/#/zone/brest-bts">'
-        f"<b><u>{safe}</u></b></a>"
+        f"<b><u>{html.escape(text)}</u></b></a>"
     )
 
 
@@ -150,13 +143,11 @@ def build_report(d):
         "━━━━━━━━━━━━━━━\n"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
         f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
-        f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
+        f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}"
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
-        '🔗 <a href="https://mon.declarant.by/#/zone/brest-bts">'
-        "Сайт мониторинга Брест</a>\n"
         "━━━━━━━━━━━━━━━\n"
     )
 
@@ -165,10 +156,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
     while not stop_event.is_set():
         data = fetch_data()
         if "error" in data:
-            bot.send_message(
-                chat_id,
-                f"❌ Ошибка мониторинга: {data['error']}",
-            )
+            bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
             bot.send_message(
                 chat_id,
@@ -176,7 +164,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
-
         for _ in range(interval * 60):
             if stop_event.is_set():
                 break
@@ -187,7 +174,6 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
     with sessions_lock:
         if is_monitoring(chat_id):
             return False
-
         stop_event = threading.Event()
         thread = threading.Thread(
             target=monitoring_loop,
@@ -209,7 +195,6 @@ def stop_monitoring(chat_id: int) -> bool:
         if not session or not session["thread"].is_alive():
             sessions.pop(chat_id, None)
             return False
-
         session["stop_event"].set()
         session["thread"].join(timeout=2)
         sessions.pop(chat_id, None)
@@ -220,24 +205,23 @@ def stop_monitoring(chat_id: int) -> bool:
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
     chat_id = message.chat.id
-    with sessions_lock:
-        if is_monitoring(chat_id):
-            bot.reply_to(
-                message,
-                "⚠️ Мониторинг уже запущен!",
-                reply_markup=get_main_keyboard(),
-            )
-            return
+    if is_monitoring(chat_id):
+        bot.reply_to(
+            message,
+            "⚠️ Мониторинг уже запущен!",
+            reply_markup=get_main_keyboard(),
+        )
+        return
 
     markup = telebot.types.InlineKeyboardMarkup()
-    btn10 = telebot.types.InlineKeyboardButton(
-        "⏱ 10 мин", callback_data="int_10"
+    markup.add(
+        telebot.types.InlineKeyboardButton(
+            "⏱ 10 мин", callback_data="int_10"
+        ),
+        telebot.types.InlineKeyboardButton(
+            "✍️ Свой интервал", callback_data="int_custom"
+        ),
     )
-    btn_custom = telebot.types.InlineKeyboardButton(
-        "✍️ Свой интервал", callback_data="int_custom"
-    )
-    markup.add(btn10, btn_custom)
-
     bot.send_message(
         chat_id,
         "🚀 <b>Мониторинг границы Брест</b>\nВыберите интервал опроса:",
@@ -253,7 +237,6 @@ def set_10(call):
     except Exception:
         pass
     chat_id = call.message.chat.id
-
     if not start_monitoring(chat_id, 10):
         bot.send_message(
             chat_id,
@@ -261,7 +244,6 @@ def set_10(call):
             reply_markup=get_main_keyboard(),
         )
         return
-
     bot.send_message(
         chat_id,
         "✅ Запуск: каждые 10 минут. Первый отчет отправляется...",
@@ -276,16 +258,13 @@ def set_custom(call):
     except Exception:
         pass
     chat_id = call.message.chat.id
-
-    with sessions_lock:
-        if is_monitoring(chat_id):
-            bot.send_message(
-                chat_id,
-                "⚠️ Мониторинг уже запущен!",
-                reply_markup=get_main_keyboard(),
-            )
-            return
-
+    if is_monitoring(chat_id):
+        bot.send_message(
+            chat_id,
+            "⚠️ Мониторинг уже запущен!",
+            reply_markup=get_main_keyboard(),
+        )
+        return
     msg = bot.send_message(
         chat_id, "✍️ Введите количество <b>минут</b> (число):", parse_mode="HTML"
     )
@@ -296,7 +275,7 @@ def process_custom_step(message):
     chat_id = message.chat.id
     try:
         minutes = int(message.text.strip())
-        if minutes < 1 or minutes > 1440:
+        if not (1 <= minutes <= 1440):
             raise ValueError()
     except (ValueError, AttributeError, TypeError):
         bot.send_message(
@@ -311,7 +290,6 @@ def process_custom_step(message):
             reply_markup=get_main_keyboard(),
         )
         return
-
     bot.send_message(
         chat_id,
         f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...",
@@ -338,11 +316,20 @@ def stop(message):
         )
 
 
-# --- ЗАПУСК БОТА В ФОНОВОМ ПОТОКЕ ДЛЯ GUNICORN ---
+# Запуск потока телеграм-бота с защитой от дублирования (сбрасываем вебхуки и ждем)
+_bot_initialized = False
+
+
 def run_telegram_bot():
+    global _bot_initialized
+    if _bot_initialized:
+        return
+    _bot_initialized = True
+
+    time.sleep(2)  # Пауза, чтобы старый процесс успел полностью освободить порт/соединение
     try:
         requests.get(
-            f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook",
+            f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
             timeout=10,
         )
     except Exception:
@@ -350,12 +337,11 @@ def run_telegram_bot():
 
     while True:
         try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
+            bot.polling(none_stop=True, interval=1, timeout=20)
         except Exception as e:
             time.sleep(5)
 
 
-# Запускаем бота в фоне при импорте файла Gunicorn'ом
 threading.Thread(target=run_telegram_bot, daemon=True).start()
 
 if __name__ == "__main__":
