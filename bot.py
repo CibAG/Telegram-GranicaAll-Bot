@@ -46,10 +46,6 @@ def home():
     return "Bot is running!"
 
 
-def run_flask():
-    app.run(host="0.0.0.0", port=10000)
-
-
 def get_main_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, row_width=2
@@ -67,7 +63,6 @@ def is_monitoring(chat_id: int) -> bool:
 
 def fetch_data():
     try:
-        # Явно отключаем прокси, чтобы Render не заворачивал запросы
         proxies = {"http": None, "https": None}
 
         stats = requests.get(
@@ -343,22 +338,25 @@ def stop(message):
         )
 
 
-if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    print("Flask server started in background thread.")
-
+# --- ЗАПУСК БОТА В ФОНОВОМ ПОТОКЕ ДЛЯ GUNICORN ---
+def run_telegram_bot():
     try:
         requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook",
             timeout=10,
         )
-    except requests.RequestException as e:
-        print(f"Webhook delete failed: {e}")
+    except Exception:
+        pass
 
     while True:
         try:
-            print(f"[{datetime.now()}] Bot started and ready...")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
-            print(f"[{datetime.now()}] Error: {e}. Restart in 5s...")
             time.sleep(5)
+
+
+# Запускаем бота в фоне при импорте файла Gunicorn'ом
+threading.Thread(target=run_telegram_bot, daemon=True).start()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
