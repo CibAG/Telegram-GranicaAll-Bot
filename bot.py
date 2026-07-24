@@ -53,6 +53,17 @@ def get_main_keyboard():
     return markup
 
 
+def get_report_keyboard():
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(
+        telebot.types.InlineKeyboardButton(
+            "🔗 Сайт мониторинга Брест",
+            url="https://mon.declarant.by/#/zone/brest-bts"
+        )
+    )
+    return markup
+
+
 def is_monitoring(chat_id: int) -> bool:
     session = sessions.get(chat_id)
     return bool(session and session["thread"].is_alive())
@@ -139,10 +150,7 @@ def format_estimate_html(minutes):
             if hours
             else f"{minutes} мин."
         )
-    return (
-        f'<a href="https://mon.declarant.by/#/zone/brest-bts">'
-        f"<b><u>{html.escape(text)}</u></b></a>"
-    )
+    return f"<b>{html.escape(text)}</b>"
 
 
 def build_report(d):
@@ -156,7 +164,7 @@ def build_report(d):
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
-        "━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━"
     )
 
 
@@ -171,6 +179,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 build_report(data),
                 parse_mode="HTML",
                 disable_web_page_preview=True,
+                reply_markup=get_report_keyboard(),
             )
         for _ in range(interval * 60):
             if stop_event.is_set():
