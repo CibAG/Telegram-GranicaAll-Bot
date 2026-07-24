@@ -87,7 +87,7 @@ def fetch_data():
 
         cars = queue.get("carLiveQueue", [])
         
-        # Сортируем машины точно так же, как они идут в очереди (от самой первой по дате регистрации)
+        # Сортируем машины от самой первой по дате регистрации
         sorted_cars = []
         if cars:
             sorted_cars = sorted(
@@ -139,7 +139,7 @@ def fetch_data():
             "changed": changed_date,
             "wait": wait_minutes,
             "estimate": estimate_minutes,
-            "sorted_cars": sorted_cars  # Сохраняем отсортированный список для поиска
+            "sorted_cars": sorted_cars
         }
     except Exception as e:
         return {"error": str(e)}
@@ -170,7 +170,7 @@ def build_report(d):
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
         "━━━━━━━━━━━━━━━\n"
-        "💡 <i>Просто отправьте номер машины в чат, чтобы узнать её позицию в очереди!</i>"
+        "💡 <i>Отправьте номер машины в чат, чтобы узнать её позицию!</i>"
     )
 
 
@@ -180,7 +180,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
         if "error" in data:
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
-            # Сохраняем актуальный список машин в сессию для поиска по номеру
             with sessions_lock:
                 if chat_id in sessions:
                     sessions[chat_id]["last_cars"] = data.get("sorted_cars", [])
@@ -345,15 +344,11 @@ def stop(message):
         )
 
 
-# Обработчик произвольного текста (поиск машины по номеру)
-@bot.message_handler(func=lambda message: True)
+# Безопасный обработчик для поиска машины по номеру
+@bot.message_handler(func=lambda message: message.text and message.text not in ["🚀 Старт", "🛑 Стоп"] and not message.text.startswith("/"))
 def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
-
-    # Игнорируем кнопки меню
-    if text in ["🚀 Старт", "🛑 Стоп"]:
-        return
 
     with sessions_lock:
         session = sessions.get(chat_id)
@@ -366,13 +361,11 @@ def handle_car_search(message):
             return
         cars = session["last_cars"]
 
-    # Ищем машину по полю рег. номера (регистронезависимо и без учета пробелов)
     search_query = text.replace(" ", "").lower()
     found_car = None
     position = -1
 
     for idx, car in enumerate(cars, start=1):
-        # Поле номера в JSON обычно называется "nzp" или аналогично (проверим оба варианта: nzp / number / reg_number)
         car_number = str(car.get("nzp") or car.get("number") or car.get("reg_number") or "").replace(" ", "").lower()
         if search_query in car_number or search_query == car_number:
             found_car = car
@@ -392,7 +385,7 @@ def handle_car_search(message):
     else:
         response_text = (
             f"❌ Машина с номером <b>{html.escape(text)}</b> не найдена в текущей активной очереди.\n"
-            "Убедитесь, что номер введен правильно (или попробуйте ввести часть номера)."
+            "Убедитесь, что номер введен правильно."
         )
 
     bot.reply_to(message, response_text, parse_mode="HTML")
