@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import time
+from flask import Flask
 
 import requests
 import telebot
@@ -340,3 +341,16 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[{datetime.now()}] Error: {e}. Restart in 5s...")
             time.sleep(5)
+
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
+
+# Запускаем Flask в отдельном потоке, чтобы он не мешал основному циклу бота
+threading.Thread(target=run_flask, daemon=True).start()
