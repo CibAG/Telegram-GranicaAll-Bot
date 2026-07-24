@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import html
 import json
 import os
@@ -85,9 +85,17 @@ def fetch_data():
             reg_time = datetime.strptime(
                 first["registration_date"], "%H:%M:%S %d.%m.%Y"
             )
+            
+            # Учитываем белорусскую таймзону (UTC+3) против серверного UTC
+            by_timezone = timezone(timedelta(hours=3))
+            now_by = datetime.now(by_timezone).replace(tzinfo=None)
+            
             wait_minutes = int(
-                (datetime.now() - reg_time).total_seconds() / 60
+                (now_by - reg_time).total_seconds() / 60
             )
+            if wait_minutes < 0:
+                wait_minutes = 0
+
             registration_date = first["registration_date"]
             changed_date = first.get("changed_date", "-")
         else:
@@ -143,7 +151,7 @@ def build_report(d):
         "━━━━━━━━━━━━━━━\n"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
         f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
-        f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}"
+        f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
@@ -316,7 +324,6 @@ def stop(message):
         )
 
 
-# Запуск потока телеграм-бота с защитой от дублирования (сбрасываем вебхуки и ждем)
 _bot_initialized = False
 
 
@@ -326,7 +333,7 @@ def run_telegram_bot():
         return
     _bot_initialized = True
 
-    time.sleep(2)  # Пауза, чтобы старый процесс успел полностью освободить порт/соединение
+    time.sleep(2)
     try:
         requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
