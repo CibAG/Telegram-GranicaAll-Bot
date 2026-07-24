@@ -87,7 +87,6 @@ def fetch_data():
 
         cars = queue.get("carLiveQueue", [])
         
-        # Сортируем машины от самой первой по дате регистрации
         sorted_cars = []
         if cars:
             sorted_cars = sorted(
@@ -101,7 +100,6 @@ def fetch_data():
                 first["registration_date"], "%H:%M:%S %d.%m.%Y"
             )
             
-            # Учитываем белорусскую таймзону (UTC+3) против серверного UTC
             by_timezone = timezone(timedelta(hours=3))
             now_by = datetime.now(by_timezone).replace(tzinfo=None)
             
@@ -344,11 +342,17 @@ def stop(message):
         )
 
 
-# Исправленный обработчик поиска машины по номеру (проверяет правильный ключ 'number')
-@bot.message_handler(func=lambda message: message.text and message.text not in ["🚀 Старт", "🛑 Стоп"] and not message.text.startswith("/"))
+# Прямой обработчик текстов без сложных условий для проверки
+@bot.message_handler(content_types=['text'])
 def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
+
+    # Пропускаем управляющие кнопки меню
+    if text in ["🚀 Старт", "🛑 Стоп"]:
+        return
+
+    print(f"DEBUG: Получен текст для поиска: '{text}' от чата {chat_id}")
 
     with sessions_lock:
         session = sessions.get(chat_id)
