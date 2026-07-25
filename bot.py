@@ -12,6 +12,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Принудительно сбрасываем прокси-переменные окружения Render
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+
 sessions_lock = threading.Lock()
 sessions: dict[int, dict] = {}
 
@@ -72,7 +78,7 @@ def is_monitoring(chat_id: int) -> bool:
 def fetch_data():
     try:
         session_req = requests.Session()
-        session_req.trust_env = False  # Отключаем системный прокси Render
+        session_req.trust_env = False
 
         stats = session_req.get(
             f"{BASE}/monitoring/statistics",
