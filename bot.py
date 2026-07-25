@@ -71,18 +71,18 @@ def is_monitoring(chat_id: int) -> bool:
 
 def fetch_data():
     try:
-        proxies = {"http": None, "https": None}
-        stats = requests.get(
+        session_req = requests.Session()
+        session_req.trust_env = False  # Отключаем системный прокси Render
+
+        stats = session_req.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
-            proxies=proxies,
         ).json()
-        queue = requests.get(
+        queue = session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
-            proxies=proxies,
         ).json()
 
         cars = queue.get("carLiveQueue", [])
@@ -406,7 +406,7 @@ def run_telegram_bot():
         return
     _bot_initialized = True
 
-    time.sleep(2)
+    time.sleep(3)
     try:
         requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
@@ -417,9 +417,12 @@ def run_telegram_bot():
 
     while True:
         try:
-            bot.polling(none_stop=True, interval=1, timeout=20)
+            bot.polling(none_stop=True, interval=2, timeout=30)
         except Exception as e:
-            time.sleep(5)
+            if "409" in str(e):
+                time.sleep(10)
+            else:
+                time.sleep(5)
 
 
 threading.Thread(target=run_telegram_bot, daemon=True).start()
