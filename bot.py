@@ -39,7 +39,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Bot is active", 200
 
 
 def get_main_keyboard():
@@ -87,7 +87,6 @@ def fetch_data():
 
         cars = queue.get("carLiveQueue", [])
         
-        # Сортируем машины от самой первой по дате регистрации
         sorted_cars = []
         if cars:
             sorted_cars = sorted(
@@ -101,7 +100,6 @@ def fetch_data():
                 first["registration_date"], "%H:%M:%S %d.%m.%Y"
             )
             
-            # Учитываем белорусскую таймзону (UTC+3) против серверного UTC
             by_timezone = timezone(timedelta(hours=3))
             now_by = datetime.now(by_timezone).replace(tzinfo=None)
             
@@ -344,7 +342,6 @@ def stop(message):
         )
 
 
-# Обработчик поиска машины по номеру с использованием поля 'regnum'
 @bot.message_handler(content_types=['text'])
 def handle_car_search(message):
     chat_id = message.chat.id
