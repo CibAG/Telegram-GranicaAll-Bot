@@ -71,24 +71,28 @@ def get_report_keyboard():
 
 
 def is_monitoring(chat_id: int) -> bool:
-    session = sessions.get(chat_id)
-    return bool(session and session["thread"].is_alive())
+    with sessions_lock:
+        session = sessions.get(chat_id)
+        return bool(session and session["thread"].is_alive())
 
 
 def fetch_data():
     try:
         session_req = requests.Session()
         session_req.trust_env = False
+        no_proxy = {"http": None, "https": None}
 
         stats = session_req.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
+            proxies=no_proxy
         ).json()
         queue = session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
+            proxies=no_proxy
         ).json()
 
         cars = queue.get("carLiveQueue", [])
@@ -203,8 +207,10 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
 
 def start_monitoring(chat_id: int, interval: int) -> bool:
     with sessions_lock:
-        if is_monitoring(chat_id):
+        session = sessions.get(chat_id)
+        if session and session["thread"].is_alive():
             return False
+            
         stop_event = threading.Event()
         thread = threading.Thread(
             target=monitoring_loop,
