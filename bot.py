@@ -183,26 +183,38 @@ def build_report(d):
 
 
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
+    print(f"[DEBUG] Поток мониторинга для чата {chat_id} запущен с интервалом {interval} мин.")
     while not stop_event.is_set():
+        print(f"[DEBUG] Начинаем опрос сервера для чата {chat_id}...")
         data = fetch_data()
         if "error" in data:
+            print(f"[DEBUG] Ошибка при запросе данных: {data['error']}")
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
+            print(f"[DEBUG] Данные успешно получены. Машин: {data.get('total')}. Отправляем отчет...")
             with sessions_lock:
                 if chat_id in sessions:
                     sessions[chat_id]["last_cars"] = data.get("sorted_cars", [])
 
-            bot.send_message(
-                chat_id,
-                build_report(data),
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-                reply_markup=get_report_keyboard(),
-            )
+            try:
+                bot.send_message(
+                    chat_id,
+                    build_report(data),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=get_report_keyboard(),
+                )
+                print(f"[DEBUG] Отчет успешно отправлен в чат {chat_id}.")
+            except Exception as e:
+                print(f"[DEBUG] Ошибка при отправке сообщения в Telegram: {e}")
+
+        print(f"[DEBUG] Засыпаем на {interval} минут...")
         for _ in range(interval * 60):
             if stop_event.is_set():
+                print(f"[DEBUG] Получен сигнал остановки во время сна.")
                 break
             time.sleep(1)
+    print(f"[DEBUG] Поток мониторинга для чата {chat_id} завершил работу.")
 
 
 def start_monitoring(chat_id: int, interval: int) -> bool:
