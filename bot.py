@@ -441,12 +441,11 @@ def run_telegram_bot():
 
     while True:
         try:
-            bot.polling(none_stop=True, interval=2, timeout=30)
+            print("[DEBUG] Запуск infinity_polling()...")
+            bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
-            if "409" in str(e):
-                time.sleep(10)
-            else:
-                time.sleep(5)
+            print(f"[DEBUG] Ошибка в polling: {e}")
+            time.sleep(5)
 
 
 threading.Thread(target=run_telegram_bot, daemon=True).start()
