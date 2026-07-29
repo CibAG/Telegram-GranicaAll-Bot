@@ -204,7 +204,6 @@ def get_car_status_line(cars, target_query, stats_hour):
             reg_num = car.get("regnum") or car.get("number") or car.get("nzp") or target_query
             status = get_status_text(car)
             
-            # Расчет примерного времени ожидания для конкретной машины по Варианту 1
             eta_str = ""
             if stats_hour > 0:
                 car_mins = int((idx / stats_hour) * 60)
@@ -238,15 +237,11 @@ def build_report(d, car_filter=None):
 
 
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
-    print(f"[DEBUG] Поток мониторинга для чата {chat_id} запущен с интервалом {interval} мин.")
     while not stop_event.is_set():
-        print(f"[DEBUG] Начинаем опрос сервера для чата {chat_id}...")
         data = fetch_data()
         if "error" in data:
-            print(f"[DEBUG] Ошибка при запросе данных: {data['error']}")
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
-            print(f"[DEBUG] Данные успешно получены. Машин: {data.get('total')}. Отправляем отчет...")
             with sessions_lock:
                 session = sessions.get(chat_id, {})
                 session["last_cars"] = data.get("sorted_cars", [])
@@ -260,17 +255,13 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                     disable_web_page_preview=True,
                     reply_markup=get_report_keyboard(),
                 )
-                print(f"[DEBUG] Отчет успешно отправлен в чат {chat_id}.")
             except Exception as e:
-                print(f"[DEBUG] Ошибка при отправке сообщения в Telegram: {e}")
+                pass
 
-        print(f"[DEBUG] Засыпаем на {interval} минут...")
         for _ in range(interval * 60):
             if stop_event.is_set():
-                print(f"[DEBUG] Получен сигнал остановки во время сна.")
                 break
             time.sleep(1)
-    print(f"[DEBUG] Поток мониторинга для чата {chat_id} завершил работу.")
 
 
 def start_monitoring(chat_id: int, interval: int) -> bool:
@@ -431,6 +422,7 @@ def stop(message):
         )
 
 
+@bot.message_handler(commands=["filter"])
 @bot.message_handler(func=lambda message: message.text == "🚗 Фильтр машины")
 def ask_car_filter(message):
     chat_id = message.chat.id
@@ -446,7 +438,7 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    if text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
         return
 
     with sessions_lock:
@@ -462,6 +454,7 @@ def save_car_filter_step(message):
     )
 
 
+@bot.message_handler(commands=["clear"])
 @bot.message_handler(func=lambda message: message.text == "❌ Снять фильтр")
 def remove_car_filter(message):
     chat_id = message.chat.id
@@ -482,7 +475,7 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
         return
 
     with sessions_lock:
@@ -554,10 +547,8 @@ def run_telegram_bot():
 
     while True:
         try:
-            print("[DEBUG] Запуск infinity_polling()...")
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
-            print(f"[DEBUG] Ошибка в polling: {e}")
             time.sleep(5)
 
 
