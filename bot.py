@@ -50,13 +50,15 @@ def home():
 
 def get_main_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True, row_width=2
+        resize_keyboard=True
     )
-    markup.add(
+    markup.row(
         telebot.types.KeyboardButton("🚀 Старт"),
-        telebot.types.KeyboardButton("🛑 Стоп"),
+        telebot.types.KeyboardButton("🛑 Стоп")
+    )
+    markup.row(
         telebot.types.KeyboardButton("🚗 Фильтр машины"),
-        telebot.types.KeyboardButton("❌ Снять фильтр"),
+        telebot.types.KeyboardButton("❌ Снять фильтр")
     )
     return markup
 
@@ -171,7 +173,6 @@ def format_estimate_html(minutes):
 def get_status_text(car):
     raw_status = car.get("status") or car.get("state") or car.get("statusName")
     
-    # Словарь кодов статусов с сайта belarusborder.by
     status_map = {
         2: "Прибыл в ЗО",
         3: "Вызван в ПП",
@@ -202,18 +203,19 @@ def get_car_status_line(cars, target_query):
         if search_query in car_number or search_query == car_number:
             reg_num = car.get("regnum") or car.get("number") or car.get("nzp") or target_query
             status = get_status_text(car)
-            return f"🚗 <b>Ваша машина ({html.escape(str(reg_num))}):</b> {idx}-я в очереди | Статус: <i>{html.escape(str(status))}</i>\n"
+            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>\n"
     
-    return f"🚗 <b>Ваша машина ({html.escape(target_query)}):</b> не найдена в текущей очереди\n"
+    return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
 
 def build_report(d, car_filter=None):
     car_line = get_car_status_line(d.get("sorted_cars", []), car_filter)
-    filter_block = f"━━━━━━━━━━━━━━━\n{car_line}" if car_line else ""
+    filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
         "📊 <b>Мониторинг границы Брест</b>\n"
         "━━━━━━━━━━━━━━━\n"
+        f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
         f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
         f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
@@ -221,7 +223,6 @@ def build_report(d, car_filter=None):
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
-        f"{filter_block}"
         "━━━━━━━━━━━━━━━\n"
         "💡 <i>Мониторинг работает в фоновом режиме.</i>"
     )
