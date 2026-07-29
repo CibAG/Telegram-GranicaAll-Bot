@@ -55,6 +55,8 @@ def get_main_keyboard():
     markup.add(
         telebot.types.KeyboardButton("🚀 Старт"),
         telebot.types.KeyboardButton("🛑 Стоп"),
+        telebot.types.KeyboardButton("🚗 Фильтр машины"),
+        telebot.types.KeyboardButton("❌ Снять фильтр"),
     )
     return markup
 
@@ -166,7 +168,31 @@ def format_estimate_html(minutes):
     return f"<b>{html.escape(text)}</b>"
 
 
-def build_report(d):
+def get_car_status_line(cars, target_query):
+    if not target_query or not cars:
+        return ""
+    
+    search_query = target_query.replace(" ", "").lower()
+    for idx, car in enumerate(cars, start=1):
+        car_number = str(
+            car.get("regnum") or 
+            car.get("number") or 
+            car.get("nzp") or 
+            car.get("reg_number") or ""
+        ).replace(" ", "").lower()
+        
+        if search_query in car_number or search_query == car_number:
+            reg_num = car.get("regnum") or car.get("number") or car.get("nzp") or target_query
+            status = car.get("status") or car.get("state") or car.get("statusName") or "Активен"
+            return f"🚗 <b>Ваша машина ({html.escape(str(reg_num))}):</b> {idx}-я в очереди | Статус: <i>{html.escape(str(status))}</i>\n"
+    
+    return f"🚗 <b>Ваша машина ({html.escape(target_query)}):</b> не найдена в текущей очереди\n"
+
+
+def build_report(d, car_filter=None):
+    car_line = get_car_status_line(d.get("sorted_cars", []), car_filter)
+    filter_block = f"━━━━━━━━━━━━━━━\n{car_line}" if car_line else ""
+    
     return (
         "📊 <b>Мониторинг границы Брест</b>\n"
         "━━━━━━━━━━━━━━━\n"
@@ -177,8 +203,9 @@ def build_report(d):
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
         f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
+        f"{filter_block}"
         "━━━━━━━━━━━━━━━\n"
-        "💡 <i>Отправьте номер машины в чат, чтобы узнать её позицию!</i>"
+        "💡 <i>Мониторинг работает в фоновом режиме.</i>"
     )
 
 
@@ -193,13 +220,14 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
         else:
             print(f"[DEBUG] Данные успешно получены. Машин: {data.get('total')}. Отправляем отчет...")
             with sessions_lock:
-                if chat_id in sessions:
-                    sessions[chat_id]["last_cars"] = data.get("sorted_cars", [])
+                session = sessions.get(chat_id, {})
+                session["last_cars"] = data.get("sorted_cars", [])
+                current_filter = session.get("car_filter")
 
             try:
                 bot.send_message(
                     chat_id,
-                    build_report(data),
+                    build_report(data, current_filter),
                     parse_mode="HTML",
                     disable_web_page_preview=True,
                     reply_markup=get_report_keyboard(),
@@ -229,11 +257,16 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
             args=(chat_id, stop_event, interval),
             daemon=True,
         )
+        
+        # Сохраняем или переносим текущий фильтр если сессия уже была
+        old_filter = session.get("car_filter") if session else None
+        
         sessions[chat_id] = {
             "thread": thread,
             "stop_event": stop_event,
             "interval": interval,
-            "last_cars": []
+            "last_cars": [],
+            "car_filter": old_filter
         }
         thread.start()
         return True
@@ -266,6 +299,9 @@ def start(message):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton(
+            "⏱ 3 мин", callback_data="int_3"
+        ),
+        telebot.types.InlineKeyboardButton(
             "⏱ 10 мин", callback_data="int_10"
         ),
         telebot.types.InlineKeyboardButton(
@@ -280,14 +316,16 @@ def start(message):
     )
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "int_10")
-def set_10(call):
+@bot.callback_query_handler(func=lambda call: call.data in ["int_3", "int_10"])
+def set_preset_interval(call):
     try:
         bot.answer_callback_query(call.id)
     except Exception:
         pass
     chat_id = call.message.chat.id
-    if not start_monitoring(chat_id, 10):
+    interval = 3 if call.data == "int_3" else 10
+    
+    if not start_monitoring(chat_id, interval):
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
@@ -296,7 +334,7 @@ def set_10(call):
         return
     bot.send_message(
         chat_id,
-        "✅ Запуск: каждые 10 минут. Первый отчет отправляется...",
+        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...",
         reply_markup=get_main_keyboard(),
     )
 
@@ -316,7 +354,7 @@ def set_custom(call):
         )
         return
     msg = bot.send_message(
-        chat_id, "✍️ Введите количество <b>минут</b> (число):", parse_mode="HTML"
+        chat_id, "✍️ Введите количество <b>минут</b> для интервала (число):", parse_mode="HTML"
     )
     bot.register_next_step_handler(msg, process_custom_step)
 
@@ -366,12 +404,58 @@ def stop(message):
         )
 
 
+@bot.message_handler(func=lambda message: message.text == "🚗 Фильтр машины")
+def ask_car_filter(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(
+        chat_id,
+        "✍️ Введите гос.номер машины для постоянного отслеживания в отчетах:",
+        reply_markup=get_main_keyboard()
+    )
+    bot.register_next_step_handler(msg, save_car_filter_step)
+
+
+def save_car_filter_step(message):
+    chat_id = message.chat.id
+    text = message.text.strip()
+    
+    if text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
+        return
+
+    with sessions_lock:
+        if chat_id not in sessions:
+            sessions[chat_id] = {"car_filter": None, "last_cars": []}
+        sessions[chat_id]["car_filter"] = text
+
+    bot.reply_to(
+        message,
+        f"✅ Фильтр по машине <b>{html.escape(text)}</b> успешно установлен!\nТеперь каждый отчет будет содержать информацию по ней до отключения.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@bot.message_handler(func=lambda message: message.text == "❌ Снять фильтр")
+def remove_car_filter(message):
+    chat_id = message.chat.id
+    with sessions_lock:
+        if chat_id in sessions:
+            sessions[chat_id]["car_filter"] = None
+
+    bot.reply_to(
+        message,
+        "❌ Фильтр по машине отключен.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="HTML"
+    )
+
+
 @bot.message_handler(content_types=['text'])
 def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text in ["🚀 Старт", "🛑 Стоп"]:
+    if text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
         return
 
     with sessions_lock:
@@ -405,10 +489,12 @@ def handle_car_search(message):
     if found_car:
         reg_num = found_car.get("regnum") or found_car.get("number") or found_car.get("nzp") or text
         reg_date = found_car.get("registration_date", "-")
+        status = found_car.get("status") or found_car.get("state") or found_car.get("statusName") or "Активен"
         response_text = (
             f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
             f"🚗 <b>Позиция в очереди:</b> <b>{position}</b>-я с начала\n"
+            f"📋 <b>Статус:</b> {html.escape(str(status))}\n"
             f"📅 <b>Дата регистрации:</b> {html.escape(str(reg_date))}\n"
             f"━━━━━━━━━━━━━━━"
         )
