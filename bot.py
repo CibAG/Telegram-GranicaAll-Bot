@@ -168,6 +168,24 @@ def format_estimate_html(minutes):
     return f"<b>{html.escape(text)}</b>"
 
 
+def get_status_text(car):
+    raw_status = car.get("status") or car.get("state") or car.get("statusName")
+    
+    # Словарь кодов статусов с сайта belarusborder.by
+    status_map = {
+        2: "Прибыл в ЗО",
+        3: "Вызван в ПП",
+    }
+    
+    if isinstance(raw_status, int) and raw_status in status_map:
+        return status_map[raw_status]
+    
+    if raw_status and not isinstance(raw_status, int):
+        return str(raw_status)
+        
+    return "В очереди"
+
+
 def get_car_status_line(cars, target_query):
     if not target_query or not cars:
         return ""
@@ -183,7 +201,7 @@ def get_car_status_line(cars, target_query):
         
         if search_query in car_number or search_query == car_number:
             reg_num = car.get("regnum") or car.get("number") or car.get("nzp") or target_query
-            status = car.get("status") or car.get("state") or car.get("statusName") or "Активен"
+            status = get_status_text(car)
             return f"🚗 <b>Ваша машина ({html.escape(str(reg_num))}):</b> {idx}-я в очереди | Статус: <i>{html.escape(str(status))}</i>\n"
     
     return f"🚗 <b>Ваша машина ({html.escape(target_query)}):</b> не найдена в текущей очереди\n"
@@ -258,7 +276,6 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
             daemon=True,
         )
         
-        # Сохраняем или переносим текущий фильтр если сессия уже была
         old_filter = session.get("car_filter") if session else None
         
         sessions[chat_id] = {
@@ -489,7 +506,7 @@ def handle_car_search(message):
     if found_car:
         reg_num = found_car.get("regnum") or found_car.get("number") or found_car.get("nzp") or text
         reg_date = found_car.get("registration_date", "-")
-        status = found_car.get("status") or found_car.get("state") or found_car.get("statusName") or "Активен"
+        status = get_status_text(found_car)
         response_text = (
             f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
