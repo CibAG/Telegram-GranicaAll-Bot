@@ -48,7 +48,7 @@ def home():
     return "Bot is active", 200
 
 
-def get_main_keyboard():
+def get_main_keyboard(alarm_status=False):
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True
     )
@@ -59,6 +59,10 @@ def get_main_keyboard():
     markup.row(
         telebot.types.KeyboardButton("🚗 Фильтр машины"),
         telebot.types.KeyboardButton("❌ Снять фильтр")
+    )
+    alarm_text = "🔔 Сирена: ВКЛ" if alarm_status else "🔕 Сирена: ВЫКЛ"
+    markup.row(
+        telebot.types.KeyboardButton(alarm_text)
     )
     return markup
 
@@ -187,6 +191,52 @@ def get_status_text(car):
     return "В очереди"
 
 
+def check_car_alarm_trigger(cars, target_query, chat_id):
+    if not target_query or not cars:
+        return
+
+    search_query = target_query.replace(" ", "").lower()
+    for idx, car in enumerate(cars, start=1):
+        car_number = str(
+            car.get("regnum") or 
+            car.get("number") or 
+            car.get("nzp") or 
+            car.get("reg_number") or ""
+        ).replace(" ", "").lower()
+        
+        if search_query in car_number or search_query == car_number:
+            raw_status = car.get("status") or car.get("state") or car.get("statusName")
+            # Проверяем, вызван ли в ПП (статус 3 или строка)
+            is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
+            
+            with sessions_lock:
+                session = sessions.get(chat_id, {})
+                last_state = session.get("last_called_state", False)
+                
+                # Если статус стал "Вызван в ПП", а раньше не был — и сирена включена
+                if is_called and not last_state and session.get("alarm_enabled", False):
+                    session["last_called_state"] = True
+                    trigger_alarm(chat_id, car.get("regnum") or target_query)
+                elif not is_called:
+                    session["last_called_state"] = False
+            break
+
+
+def trigger_alarm(chat_id, reg_num):
+    try:
+        # Отправляем текстовое экстренное сообщение
+        bot.send_message(
+            chat_id,
+            f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
+            parse_mode="HTML"
+        )
+        # Отправляем звуковой сигнал (можно использовать публичную ссылку на сирену или короткий аудиофайл)
+        alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
+        bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
+    except Exception as e:
+        print(f"Ошибка отправки сирены: {e}")
+
+
 def get_car_status_line(cars, target_query, stats_hour):
     if not target_query or not cars:
         return ""
@@ -242,10 +292,14 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
         if "error" in data:
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
+            cars = data.get("sorted_cars", [])
             with sessions_lock:
                 session = sessions.get(chat_id, {})
-                session["last_cars"] = data.get("sorted_cars", [])
+                session["last_cars"] = cars
                 current_filter = session.get("car_filter")
+
+            # Проверяем триггер сирены
+            check_car_alarm_trigger(cars, current_filter, chat_id)
 
             try:
                 bot.send_message(
@@ -278,13 +332,16 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
         )
         
         old_filter = session.get("car_filter") if session else None
+        old_alarm = session.get("alarm_enabled", False) if session else False
         
         sessions[chat_id] = {
             "thread": thread,
             "stop_event": stop_event,
             "interval": interval,
             "last_cars": [],
-            "car_filter": old_filter
+            "car_filter": old_filter,
+            "alarm_enabled": old_alarm,
+            "last_called_state": False
         }
         thread.start()
         return True
@@ -306,11 +363,14 @@ def stop_monitoring(chat_id: int) -> bool:
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
     chat_id = message.chat.id
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     if is_monitoring(chat_id):
         bot.reply_to(
             message,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
         )
         return
 
@@ -344,16 +404,22 @@ def set_preset_interval(call):
     interval = 3 if call.data == "int_3" else 10
     
     if not start_monitoring(chat_id, interval):
+        with sessions_lock:
+            alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
         )
         return
+    
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     bot.send_message(
         chat_id,
         f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(alarm_on),
     )
 
 
@@ -364,11 +430,14 @@ def set_custom(call):
     except Exception:
         pass
     chat_id = call.message.chat.id
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     if is_monitoring(chat_id):
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
         )
         return
     msg = bot.send_message(
@@ -390,16 +459,22 @@ def process_custom_step(message):
         return
 
     if not start_monitoring(chat_id, minutes):
+        with sessions_lock:
+            alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
         )
         return
+    
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     bot.send_message(
         chat_id,
         f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(alarm_on),
     )
 
 
@@ -407,29 +482,69 @@ def process_custom_step(message):
 @bot.message_handler(func=lambda message: message.text == "🛑 Стоп")
 def stop(message):
     chat_id = message.chat.id
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     if stop_monitoring(chat_id):
         bot.reply_to(
             message,
             "🛑 <b>Мониторинг остановлен.</b>",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
             parse_mode="HTML",
         )
     else:
         bot.reply_to(
             message,
             "⚠️ Мониторинг не активен.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(alarm_on),
         )
+
+
+@bot.message_handler(commands=["alarm_on"])
+@bot.message_handler(func=lambda message: message.text == "🔔 Сирена: ВКЛ")
+def enable_alarm(message):
+    chat_id = message.chat.id
+    with sessions_lock:
+        if chat_id not in sessions:
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
+        sessions[chat_id]["alarm_enabled"] = True
+
+    bot.reply_to(
+        message,
+        "🔔 <b>Громкая сирена включена!</b>\nПри смене статуса отслеживаемой машины на «Вызван в ПП» бот пришлет звуковой сигнал тревоги.",
+        reply_markup=get_main_keyboard(True),
+        parse_mode="HTML"
+    )
+
+
+@bot.message_handler(commands=["alarm_off"])
+@bot.message_handler(func=lambda message: message.text == "🔕 Сирена: ВЫКЛ")
+def disable_alarm(message):
+    chat_id = message.chat.id
+    with sessions_lock:
+        if chat_id not in sessions:
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
+        sessions[chat_id]["alarm_enabled"] = False
+
+    bot.reply_to(
+        message,
+        "🔕 <b>Громкая сирена выключена.</b>",
+        reply_markup=get_main_keyboard(False),
+        parse_mode="HTML"
+    )
 
 
 @bot.message_handler(commands=["filter"])
 @bot.message_handler(func=lambda message: message.text == "🚗 Фильтр машины")
 def ask_car_filter(message):
     chat_id = message.chat.id
+    with sessions_lock:
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     msg = bot.send_message(
         chat_id,
         "✍️ Введите гос.номер машины для постоянного отслеживания в отчетах:",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(alarm_on)
     )
     bot.register_next_step_handler(msg, save_car_filter_step)
 
@@ -438,18 +553,19 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ"]:
         return
 
     with sessions_lock:
         if chat_id not in sessions:
-            sessions[chat_id] = {"car_filter": None, "last_cars": []}
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
         sessions[chat_id]["car_filter"] = text
+        alarm_on = sessions[chat_id]["alarm_enabled"]
 
     bot.reply_to(
         message,
         f"✅ Фильтр по машине <b>{html.escape(text)}</b> успешно установлен!\nТеперь каждый отчет будет содержать информацию по ней до отключения.",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(alarm_on),
         parse_mode="HTML"
     )
 
@@ -461,11 +577,14 @@ def remove_car_filter(message):
     with sessions_lock:
         if chat_id in sessions:
             sessions[chat_id]["car_filter"] = None
+            alarm_on = sessions[chat_id].get("alarm_enabled", False)
+        else:
+            alarm_on = False
 
     bot.reply_to(
         message,
         "❌ Фильтр по машине отключен.",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(alarm_on),
         parse_mode="HTML"
     )
 
@@ -475,16 +594,17 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ"]:
         return
 
     with sessions_lock:
         session = sessions.get(chat_id)
         if not session or not session.get("last_cars"):
+            alarm_on = session.get("alarm_enabled", False) if session else False
             bot.reply_to(
                 message,
                 "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт», чтобы загрузить актуальную очередь.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(alarm_on)
             )
             return
         cars = session["last_cars"]
@@ -555,4 +675,4 @@ def run_telegram_bot():
 threading.Thread(target=run_telegram_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=10000)git add bot.py
