@@ -187,7 +187,7 @@ def get_status_text(car):
     return "В очереди"
 
 
-def get_car_status_line(cars, target_query):
+def get_car_status_line(cars, target_query, stats_hour):
     if not target_query or not cars:
         return ""
     
@@ -203,13 +203,22 @@ def get_car_status_line(cars, target_query):
         if search_query in car_number or search_query == car_number:
             reg_num = car.get("regnum") or car.get("number") or car.get("nzp") or target_query
             status = get_status_text(car)
-            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>\n"
+            
+            # Расчет примерного времени ожидания для конкретной машины по Варианту 1
+            eta_str = ""
+            if stats_hour > 0:
+                car_mins = int((idx / stats_hour) * 60)
+                h, m = divmod(car_mins, 60)
+                time_formatted = f"~{h}ч {m}мин" if h else f"~{m}мин"
+                eta_str = f" | Ожидание: <b>{time_formatted}</b>"
+            
+            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
     
     return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
 
 def build_report(d, car_filter=None):
-    car_line = get_car_status_line(d.get("sorted_cars", []), car_filter)
+    car_line = get_car_status_line(d.get("sorted_cars", []), car_filter, d.get("stats_hour", 0))
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
