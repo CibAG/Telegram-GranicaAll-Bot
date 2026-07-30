@@ -42,11 +42,10 @@ def init_db():
                 is_blocked INTEGER DEFAULT 0
             )
         """)
-        # Проверяем на случай, если таблица уже была создана ранее без колонки is_blocked
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
-            pass # Колонка уже существует
+            pass
         conn.commit()
         conn.close()
 
@@ -435,13 +434,6 @@ def stop_monitoring(chat_id: int) -> bool:
         return True
 
 
-# Глобальная проверка на блокировку для любых сообщений
-@bot.middleware
-def check_block_middleware(bot_instance, message):
-    if message.chat.id != ADMIN_CHAT_ID and is_user_blocked(message.chat.id):
-        return telebot.CancelHandler()
-
-
 @bot.message_handler(commands=["start"])
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
@@ -505,11 +497,11 @@ def show_users(message):
         chat_id, username, first_name, last_name, joined_at, is_blocked = row
         uname = f"@{username}" if username else "нет юзернейма"
         name = f"{first_name} {last_name}".strip()
-        status_icon = "🔴 Заблокирован" (*" ✅ Активен"* if is_blocked == 0 else " 🔴 Заблокирован")
         
-        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at} |{status_icon}\n\n"
+        status_icon = "🔴 Заблокирован" if is_blocked == 1 else "✅ Активен"
         
-        # Кнопки для блокировки / разблокировки прямо в сообщении
+        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at} | {status_icon}\n\n"
+        
         if chat_id != ADMIN_CHAT_ID:
             if is_blocked == 0:
                 markup.add(telebot.types.InlineKeyboardButton(
@@ -540,7 +532,6 @@ def handle_block_toggle(call):
             conn.commit()
             conn.close()
 
-        # Если блокируем, принудительно останавливаем у него мониторинг
         if new_status == 1:
             stop_monitoring(target_chat_id)
             try:
@@ -549,8 +540,6 @@ def handle_block_toggle(call):
                 pass
 
         bot.answer_callback_query(call.id, "✅ Статус пользователя изменен!")
-        
-        # Обновляем список пользователей в сообщении
         show_users(call.message)
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
