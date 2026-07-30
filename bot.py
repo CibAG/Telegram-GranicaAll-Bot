@@ -101,7 +101,8 @@ def get_main_keyboard(alarm_status=False):
     )
     alarm_text = "🔔 Сирена: ВКЛ" if alarm_status else "🔕 Сирена: ВЫКЛ"
     markup.row(
-        telebot.types.KeyboardButton(alarm_text)
+        telebot.types.KeyboardButton(alarm_text),
+        telebot.types.KeyboardButton("👥 Пользователи")
     )
     return markup
 
@@ -402,7 +403,7 @@ def stop_monitoring(chat_id: int) -> bool:
 @bot.message_handler(commands=["start"])
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
-    save_user_to_db(message)  # Сохраняем пользователя в базу данных
+    save_user_to_db(message)
     chat_id = message.chat.id
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
@@ -433,6 +434,30 @@ def start(message):
         reply_markup=markup,
         parse_mode="HTML",
     )
+
+
+@bot.message_handler(commands=["users"])
+@bot.message_handler(func=lambda message: message.text == "👥 Пользователи")
+def show_users(message):
+    with db_lock:
+        conn = sqlite3.connect("bot_users.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT chat_id, username, first_name, last_name, joined_at FROM users")
+        rows = cursor.fetchall()
+        conn.close()
+
+    if not rows:
+        bot.reply_to(message, "📭 В базе пока нет ни одного пользователя.")
+        return
+
+    text = f"👥 <b>Список пользователей ({len(rows)}):</b>\n\n"
+    for row in rows:
+        chat_id, username, first_name, last_name, joined_at = row
+        uname = f"@{username}" if username else "нет юзернейма"
+        name = f"{first_name} {last_name}".strip()
+        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at}\n\n"
+
+    bot.reply_to(message, text, parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["int_3", "int_10"])
@@ -594,7 +619,7 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи"]:
         return
 
     with sessions_lock:
@@ -635,7 +660,7 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи"]:
         return
 
     with sessions_lock:
