@@ -19,6 +19,9 @@ os.environ.pop("https_proxy", None)
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
+# --- Настройки администратора ---
+ADMIN_CHAT_ID = 942912907
+
 sessions_lock = threading.Lock()
 sessions: dict[int, dict] = {}
 
@@ -87,7 +90,7 @@ def home():
     return "Bot is active", 200
 
 
-def get_main_keyboard(alarm_status=False):
+def get_main_keyboard(alarm_status=False, chat_id=None):
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True
     )
@@ -100,10 +103,17 @@ def get_main_keyboard(alarm_status=False):
         telebot.types.KeyboardButton("❌ Снять фильтр")
     )
     alarm_text = "🔔 Сирена: ВКЛ" if alarm_status else "🔕 Сирена: ВЫКЛ"
-    markup.row(
-        telebot.types.KeyboardButton(alarm_text),
-        telebot.types.KeyboardButton("👥 Пользователи")
-    )
+    
+    # Кнопка пользователей видна только администратору
+    if chat_id == ADMIN_CHAT_ID:
+        markup.row(
+            telebot.types.KeyboardButton(alarm_text),
+            telebot.types.KeyboardButton("👥 Пользователи")
+        )
+    else:
+        markup.row(
+            telebot.types.KeyboardButton(alarm_text)
+        )
     return markup
 
 
@@ -412,7 +422,7 @@ def start(message):
         bot.reply_to(
             message,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
 
@@ -439,6 +449,9 @@ def start(message):
 @bot.message_handler(commands=["users"])
 @bot.message_handler(func=lambda message: message.text == "👥 Пользователи")
 def show_users(message):
+    if message.chat.id != ADMIN_CHAT_ID:
+        return  # Игнорируем попытки остальных пользователей
+
     with db_lock:
         conn = sqlite3.connect("bot_users.db")
         cursor = conn.cursor()
@@ -475,7 +488,7 @@ def set_preset_interval(call):
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
     
@@ -485,7 +498,7 @@ def set_preset_interval(call):
     bot.send_message(
         chat_id,
         f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...",
-        reply_markup=get_main_keyboard(alarm_on),
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
 
@@ -503,7 +516,7 @@ def set_custom(call):
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
     msg = bot.send_message(
@@ -530,7 +543,7 @@ def process_custom_step(message):
         bot.send_message(
             chat_id,
             "⚠️ Мониторинг уже запущен!",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
     
@@ -540,7 +553,7 @@ def process_custom_step(message):
     bot.send_message(
         chat_id,
         f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...",
-        reply_markup=get_main_keyboard(alarm_on),
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
 
@@ -555,14 +568,14 @@ def stop(message):
         bot.reply_to(
             message,
             "🛑 <b>Мониторинг остановлен.</b>",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
             parse_mode="HTML",
         )
     else:
         bot.reply_to(
             message,
             "⚠️ Мониторинг не активен.",
-            reply_markup=get_main_keyboard(alarm_on),
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
 
 
@@ -578,7 +591,7 @@ def enable_alarm(message):
     bot.reply_to(
         message,
         "🔔 <b>Громкая сирена включена!</b>\nПри смене статуса отслеживаемой машины на «Вызван в ПП» бот пришлет звуковой сигнал тревоги.",
-        reply_markup=get_main_keyboard(True),
+        reply_markup=get_main_keyboard(True, chat_id),
         parse_mode="HTML"
     )
 
@@ -595,7 +608,7 @@ def disable_alarm(message):
     bot.reply_to(
         message,
         "🔕 <b>Громкая сирена выключена.</b>",
-        reply_markup=get_main_keyboard(False),
+        reply_markup=get_main_keyboard(False, chat_id),
         parse_mode="HTML"
     )
 
@@ -610,7 +623,7 @@ def ask_car_filter(message):
     msg = bot.send_message(
         chat_id,
         "✍️ Введите гос.номер машины для постоянного отслеживания в отчетах:",
-        reply_markup=get_main_keyboard(alarm_on)
+        reply_markup=get_main_keyboard(alarm_on, chat_id)
     )
     bot.register_next_step_handler(msg, save_car_filter_step)
 
@@ -631,7 +644,7 @@ def save_car_filter_step(message):
     bot.reply_to(
         message,
         f"✅ Фильтр по машине <b>{html.escape(text)}</b> успешно установлен!\nТеперь каждый отчет будет содержать информацию по ней до отключения.",
-        reply_markup=get_main_keyboard(alarm_on),
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
         parse_mode="HTML"
     )
 
@@ -650,7 +663,7 @@ def remove_car_filter(message):
     bot.reply_to(
         message,
         "❌ Фильтр по машине отключен.",
-        reply_markup=get_main_keyboard(alarm_on),
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
         parse_mode="HTML"
     )
 
@@ -670,7 +683,7 @@ def handle_car_search(message):
             bot.reply_to(
                 message,
                 "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт», чтобы загрузить актуальную очередь.",
-                reply_markup=get_main_keyboard(alarm_on)
+                reply_markup=get_main_keyboard(alarm_on, chat_id)
             )
             return
         cars = session["last_cars"]
