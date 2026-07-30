@@ -206,14 +206,12 @@ def check_car_alarm_trigger(cars, target_query, chat_id):
         
         if search_query in car_number or search_query == car_number:
             raw_status = car.get("status") or car.get("state") or car.get("statusName")
-            # Проверяем, вызван ли в ПП (статус 3 или строка)
             is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
             
             with sessions_lock:
                 session = sessions.get(chat_id, {})
                 last_state = session.get("last_called_state", False)
                 
-                # Если статус стал "Вызван в ПП", а раньше не был — и сирена включена
                 if is_called and not last_state and session.get("alarm_enabled", False):
                     session["last_called_state"] = True
                     trigger_alarm(chat_id, car.get("regnum") or target_query)
@@ -224,15 +222,19 @@ def check_car_alarm_trigger(cars, target_query, chat_id):
 
 def trigger_alarm(chat_id, reg_num):
     try:
-        # Отправляем текстовое экстренное сообщение
         bot.send_message(
             chat_id,
             f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
             parse_mode="HTML"
         )
-        # Отправляем звуковой сигнал (можно использовать публичную ссылку на сирену или короткий аудиофайл)
-        alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
-        bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
+        
+        if os.path.exists("alarm.ogg"):
+            with open("alarm.ogg", "rb") as audio:
+                bot.send_voice(chat_id, audio, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
+        else:
+            alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
+            bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
+            
     except Exception as e:
         print(f"Ошибка отправки сирены: {e}")
 
@@ -298,7 +300,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 session["last_cars"] = cars
                 current_filter = session.get("car_filter")
 
-            # Проверяем триггер сирены
             check_car_alarm_trigger(cars, current_filter, chat_id)
 
             try:
@@ -675,4 +676,4 @@ def run_telegram_bot():
 threading.Thread(target=run_telegram_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)git add bot.py
+    app.run(host="0.0.0.0", port=10000)
