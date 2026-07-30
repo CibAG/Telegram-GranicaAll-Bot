@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 import html
 import json
 import os
+import sqlite3
 import threading
 import time
 from flask import Flask
@@ -20,6 +21,44 @@ os.environ.pop("HTTPS_PROXY", None)
 
 sessions_lock = threading.Lock()
 sessions: dict[int, dict] = {}
+
+# --- Инициализация базы данных пользователей ---
+db_lock = threading.Lock()
+
+def init_db():
+    with db_lock:
+        conn = sqlite3.connect("bot_users.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                chat_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                joined_at TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+init_db()
+
+def save_user_to_db(message):
+    chat_id = message.chat.id
+    username = message.from_user.username or ""
+    first_name = message.from_user.first_name or ""
+    last_name = message.from_user.last_name or ""
+    joined_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with db_lock:
+        conn = sqlite3.connect("bot_users.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, joined_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (chat_id, username, first_name, last_name, joined_at))
+        conn.commit()
+        conn.close()
 
 
 def load_config(path="bot_config.json"):
@@ -363,6 +402,7 @@ def stop_monitoring(chat_id: int) -> bool:
 @bot.message_handler(commands=["start"])
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
+    save_user_to_db(message)  # Сохраняем пользователя в базу данных
     chat_id = message.chat.id
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
