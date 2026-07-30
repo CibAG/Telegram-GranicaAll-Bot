@@ -38,9 +38,15 @@ def init_db():
                 username TEXT,
                 first_name TEXT,
                 last_name TEXT,
-                joined_at TEXT
+                joined_at TEXT,
+                is_blocked INTEGER DEFAULT 0
             )
         """)
+        # Проверяем на случай, если таблица уже была создана ранее без колонки is_blocked
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass # Колонка уже существует
         conn.commit()
         conn.close()
 
@@ -57,11 +63,23 @@ def save_user_to_db(message):
         conn = sqlite3.connect("bot_users.db")
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, joined_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, joined_at, is_blocked)
+            VALUES (?, ?, ?, ?, ?, 0)
         """, (chat_id, username, first_name, last_name, joined_at))
         conn.commit()
         conn.close()
+
+
+def is_user_blocked(chat_id: int) -> bool:
+    if chat_id == ADMIN_CHAT_ID:
+        return False
+    with db_lock:
+        conn = sqlite3.connect("bot_users.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_blocked FROM users WHERE chat_id = ?", (chat_id,))
+        row = cursor.fetchone()
+        conn.close()
+    return bool(row and row[0] == 1)
 
 
 def load_config(path="bot_config.json"):
@@ -104,7 +122,6 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
     )
     alarm_text = "🔔 Сирена: ВКЛ" if alarm_status else "🔕 Сирена: ВЫКЛ"
     
-    # Кнопка пользователей видна только администратору
     if chat_id == ADMIN_CHAT_ID:
         markup.row(
             telebot.types.KeyboardButton(alarm_text),
@@ -242,6 +259,8 @@ def get_status_text(car):
 
 
 def check_car_alarm_trigger(cars, target_query, chat_id):
+    if is_user_blocked(chat_id):
+        return
     if not target_query or not cars:
         return
 
@@ -271,6 +290,8 @@ def check_car_alarm_trigger(cars, target_query, chat_id):
 
 
 def trigger_alarm(chat_id, reg_num):
+    if is_user_blocked(chat_id):
+        return
     try:
         bot.send_message(
             chat_id,
@@ -340,6 +361,8 @@ def build_report(d, car_filter=None):
 
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
     while not stop_event.is_set():
+        if is_user_blocked(chat_id):
+            break
         data = fetch_data()
         if "error" in data:
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
@@ -364,12 +387,14 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
                 pass
 
         for _ in range(interval * 60):
-            if stop_event.is_set():
+            if stop_event.is_set() or is_user_blocked(chat_id):
                 break
             time.sleep(1)
 
 
 def start_monitoring(chat_id: int, interval: int) -> bool:
+    if is_user_blocked(chat_id):
+        return False
     with sessions_lock:
         session = sessions.get(chat_id)
         if session and session["thread"].is_alive():
@@ -410,9 +435,20 @@ def stop_monitoring(chat_id: int) -> bool:
         return True
 
 
+# Глобальная проверка на блокировку для любых сообщений
+@bot.middleware
+def check_block_middleware(bot_instance, message):
+    if message.chat.id != ADMIN_CHAT_ID and is_user_blocked(message.chat.id):
+        return telebot.CancelHandler()
+
+
 @bot.message_handler(commands=["start"])
 @bot.message_handler(func=lambda message: message.text == "🚀 Старт")
 def start(message):
+    if is_user_blocked(message.chat.id):
+        bot.reply_to(message, "❌ Доступ к боту ограничен.")
+        return
+        
     save_user_to_db(message)
     chat_id = message.chat.id
     with sessions_lock:
@@ -450,12 +486,12 @@ def start(message):
 @bot.message_handler(func=lambda message: message.text == "👥 Пользователи")
 def show_users(message):
     if message.chat.id != ADMIN_CHAT_ID:
-        return  # Игнорируем попытки остальных пользователей
+        return
 
     with db_lock:
         conn = sqlite3.connect("bot_users.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT chat_id, username, first_name, last_name, joined_at FROM users")
+        cursor.execute("SELECT chat_id, username, first_name, last_name, joined_at, is_blocked FROM users")
         rows = cursor.fetchall()
         conn.close()
 
@@ -463,23 +499,72 @@ def show_users(message):
         bot.reply_to(message, "📭 В базе пока нет ни одного пользователя.")
         return
 
+    markup = telebot.types.InlineKeyboardMarkup()
     text = f"👥 <b>Список пользователей ({len(rows)}):</b>\n\n"
     for row in rows:
-        chat_id, username, first_name, last_name, joined_at = row
+        chat_id, username, first_name, last_name, joined_at, is_blocked = row
         uname = f"@{username}" if username else "нет юзернейма"
         name = f"{first_name} {last_name}".strip()
-        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at}\n\n"
+        status_icon = "🔴 Заблокирован" (*" ✅ Активен"* if is_blocked == 0 else " 🔴 Заблокирован")
+        
+        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at} |{status_icon}\n\n"
+        
+        # Кнопки для блокировки / разблокировки прямо в сообщении
+        if chat_id != ADMIN_CHAT_ID:
+            if is_blocked == 0:
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f"🚫 Заблокировать {first_name}", callback_data=f"block_{chat_id}"
+                ))
+            else:
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f"✅ Разблокировать {first_name}", callback_data=f"unblock_{chat_id}"
+                ))
 
-    bot.reply_to(message, text, parse_mode="HTML")
+    bot.reply_to(message, text, parse_mode="HTML", reply_markup=markup if markup.keyboard else None)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("block_") or call.data.startswith("unblock_"))
+def handle_block_toggle(call):
+    if call.message.chat.id != ADMIN_CHAT_ID:
+        return
+    
+    try:
+        action, chat_id_str = call.data.split("_")
+        target_chat_id = int(chat_id_str)
+        new_status = 1 if action == "block" else 0
+
+        with db_lock:
+            conn = sqlite3.connect("bot_users.db")
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET is_blocked = ? WHERE chat_id = ?", (new_status, target_chat_id))
+            conn.commit()
+            conn.close()
+
+        # Если блокируем, принудительно останавливаем у него мониторинг
+        if new_status == 1:
+            stop_monitoring(target_chat_id)
+            try:
+                bot.send_message(target_chat_id, "❌ Администратор ограничил вам доступ к боту.")
+            except Exception:
+                pass
+
+        bot.answer_callback_query(call.id, "✅ Статус пользователя изменен!")
+        
+        # Обновляем список пользователей в сообщении
+        show_users(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["int_3", "int_10"])
 def set_preset_interval(call):
+    chat_id = call.message.chat.id
+    if is_user_blocked(chat_id):
+        return
     try:
         bot.answer_callback_query(call.id)
     except Exception:
         pass
-    chat_id = call.message.chat.id
     interval = 3 if call.data == "int_3" else 10
     
     if not start_monitoring(chat_id, interval):
@@ -504,11 +589,13 @@ def set_preset_interval(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "int_custom")
 def set_custom(call):
+    chat_id = call.message.chat.id
+    if is_user_blocked(chat_id):
+        return
     try:
         bot.answer_callback_query(call.id)
     except Exception:
         pass
-    chat_id = call.message.chat.id
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
@@ -527,6 +614,8 @@ def set_custom(call):
 
 def process_custom_step(message):
     chat_id = message.chat.id
+    if is_user_blocked(chat_id):
+        return
     try:
         minutes = int(message.text.strip())
         if not (1 <= minutes <= 1440):
@@ -590,7 +679,7 @@ def enable_alarm(message):
 
     bot.reply_to(
         message,
-        "🔔 <b>Громкая сирена включена!</b>\nПри смене статуса отслеживаемой машины на «Вызван в ПП» бот пришлет звуковой сигнал тревоги.",
+        "🔔 <b>Громкая сирена включена!</b>",
         reply_markup=get_main_keyboard(True, chat_id),
         parse_mode="HTML"
     )
@@ -643,7 +732,7 @@ def save_car_filter_step(message):
 
     bot.reply_to(
         message,
-        f"✅ Фильтр по машине <b>{html.escape(text)}</b> успешно установлен!\nТеперь каждый отчет будет содержать информацию по ней до отключения.",
+        f"✅ Фильтр по машине <b>{html.escape(text)}</b> успешно установлен!",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
         parse_mode="HTML"
     )
@@ -682,7 +771,7 @@ def handle_car_search(message):
             alarm_on = session.get("alarm_enabled", False) if session else False
             bot.reply_to(
                 message,
-                "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт», чтобы загрузить актуальную очередь.",
+                "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт».",
                 reply_markup=get_main_keyboard(alarm_on, chat_id)
             )
             return
@@ -710,18 +799,14 @@ def handle_car_search(message):
         reg_date = found_car.get("registration_date", "-")
         status = get_status_text(found_car)
         response_text = (
-            f"🔍 <b>Результат поиска по номеру:</b> {html.escape(str(reg_num))}\n"
+            f"🔍 <b>Результат поиска:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"🚗 <b>Позиция в очереди:</b> <b>{position}</b>-я с начала\n"
+            f"🚗 <b>Позиция:</b> <b>{position}</b>-я\n"
             f"📋 <b>Статус:</b> {html.escape(str(status))}\n"
-            f"📅 <b>Дата регистрации:</b> {html.escape(str(reg_date))}\n"
             f"━━━━━━━━━━━━━━━"
         )
     else:
-        response_text = (
-            f"❌ Машина с номером <b>{html.escape(text)}</b> не найдена в текущей активной очереди.\n"
-            "Убедитесь, что номер введен правильно."
-        )
+        response_text = f"❌ Машина <b>{html.escape(text)}</b> не найдена."
 
     bot.reply_to(message, response_text, parse_mode="HTML")
 
