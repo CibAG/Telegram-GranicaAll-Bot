@@ -20,7 +20,29 @@ os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
 # --- Настройки администратора ---
-ADMIN_CHAT_ID = 942912907
+ADMIN_CHAT_ID = 8878062282
+
+# --- Зоны ожидания ---
+ZONES = {
+    "brest": {
+        "name": "Брест",
+        "url": "https://mon.declarant.by/#/zone/brest-bts",
+        "checkpoint_id": "brest-bts",
+        "base_url": "https://belarusborder.by/info"
+    },
+    "berestovitsa": {
+        "name": "Берестовица",
+        "url": "https://mon.declarant.by/#/zone/berestovitsa",
+        "checkpoint_id": "berestovitsa",
+        "base_url": "https://belarusborder.by/info"
+    },
+    "bruzgi": {
+        "name": "Брузги",
+        "url": "https://mon.declarant.by/#/zone/bruzgi",
+        "checkpoint_id": "bruzgi",
+        "base_url": "https://belarusborder.by/info"
+    }
+}
 
 sessions_lock = threading.Lock()
 sessions: dict[int, dict] = {}
@@ -93,8 +115,6 @@ API_TOKEN = os.getenv("API_TOKEN") or config.get("api_token")
 if not API_TOKEN:
     raise SystemExit("API_TOKEN не задан.")
 
-BASE = config.get("base_url", "https://belarusborder.by/info")
-CHECKPOINT = config.get("checkpoint_id")
 QUERY_TOKEN = config.get("query_token", "test")
 
 bot = telebot.TeleBot(API_TOKEN)
@@ -133,15 +153,33 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
     return markup
 
 
-def get_report_keyboard():
+def get_zone_keyboard():
+    """Клавиатура выбора зоны ожидания"""
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(
+        telebot.types.InlineKeyboardButton("🛑 Брест", callback_data="zone_brest"),
+        telebot.types.InlineKeyboardButton("🛑 Берестовица", callback_data="zone_berestovitsa"),
+        telebot.types.InlineKeyboardButton("🛑 Брузги", callback_data="zone_bruzgi")
+    )
+    return markup
+
+
+def get_report_keyboard(zone_key: str = "brest"):
+    """Клавиатура с кнопкой сайта мониторинга для выбранной зоны"""
+    zone = ZONES.get(zone_key, ZONES["brest"])
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton(
-            "🔗 Сайт мониторинга Брест",
-            url="https://mon.declarant.by/#/zone/brest-bts"
+            f"🔗 Сайт мониторинга {zone['name']}",
+            url=zone["url"]
         )
     )
     return markup
+
+
+def get_zone_name(zone_key: str) -> str:
+    """Получить название зоны по ключу"""
+    return ZONES.get(zone_key, ZONES["brest"])["name"]
 
 
 def is_monitoring(chat_id: int) -> bool:
@@ -150,8 +188,13 @@ def is_monitoring(chat_id: int) -> bool:
         return bool(session and session["thread"].is_alive())
 
 
-def fetch_data():
+def fetch_data(zone_key: str = "brest"):
+    """Получить данные мониторинга для указанной зоны"""
     try:
+        zone = ZONES.get(zone_key, ZONES["brest"])
+        BASE = zone["base_url"]
+        CHECKPOINT = zone["checkpoint_id"]
+        
         session_req = requests.Session()
         session_req.trust_env = False
         no_proxy = {"http": None, "https": None}
@@ -338,12 +381,13 @@ def get_car_status_line(cars, target_query, stats_hour):
     return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
 
-def build_report(d, car_filter=None):
+def build_report(d, zone_key: str = "brest", car_filter=None):
+    zone_name = get_zone_name(zone_key)
     car_line = get_car_status_line(d.get("sorted_cars", []), car_filter, d.get("stats_hour", 0))
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
-        "📊 <b>Мониторинг границы Брест</b>\n"
+        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -358,11 +402,11 @@ def build_report(d, car_filter=None):
     )
 
 
-def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
+def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zone_key: str = "brest"):
     while not stop_event.is_set():
         if is_user_blocked(chat_id):
             break
-        data = fetch_data()
+        data = fetch_data(zone_key)
         if "error" in data:
             bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
         else:
@@ -377,10 +421,10 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
             try:
                 bot.send_message(
                     chat_id,
-                    build_report(data, current_filter),
+                    build_report(data, zone_key, current_filter),
                     parse_mode="HTML",
                     disable_web_page_preview=True,
-                    reply_markup=get_report_keyboard(),
+                    reply_markup=get_report_keyboard(zone_key),
                 )
             except Exception as e:
                 pass
@@ -391,7 +435,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int):
             time.sleep(1)
 
 
-def start_monitoring(chat_id: int, interval: int) -> bool:
+def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bool:
     if is_user_blocked(chat_id):
         return False
     with sessions_lock:
@@ -402,7 +446,7 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
         stop_event = threading.Event()
         thread = threading.Thread(
             target=monitoring_loop,
-            args=(chat_id, stop_event, interval),
+            args=(chat_id, stop_event, interval, zone_key),
             daemon=True,
         )
         
@@ -416,7 +460,8 @@ def start_monitoring(chat_id: int, interval: int) -> bool:
             "last_cars": [],
             "car_filter": old_filter,
             "alarm_enabled": old_alarm,
-            "last_called_state": False
+            "last_called_state": False,
+            "zone_key": zone_key
         }
         thread.start()
         return True
@@ -445,15 +490,17 @@ def start(message):
     chat_id = message.chat.id
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+        current_zone = sessions.get(chat_id, {}).get("zone_key", "brest")
 
     if is_monitoring(chat_id):
         bot.reply_to(
             message,
-            "⚠️ Мониторинг уже запущен!",
+            f"⚠️ Мониторинг уже запущен для зоны: {get_zone_name(current_zone)}!",
             reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
 
+    zone_name = get_zone_name(current_zone)
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton(
@@ -468,10 +515,76 @@ def start(message):
     )
     bot.send_message(
         chat_id,
-        "🚀 <b>Мониторинг границы Брест</b>\nВыберите интервал опроса:",
+        f"🚀 <b>Мониторинг границы {zone_name}</b>\nВыберите интервал опроса:",
         reply_markup=markup,
         parse_mode="HTML",
     )
+
+
+@bot.message_handler(commands=["zone"])
+@bot.message_handler(func=lambda message: message.text == "🌍 Зона")
+def select_zone(message):
+    """Выбор зоны ожидания"""
+    chat_id = message.chat.id
+    if is_user_blocked(chat_id):
+        bot.reply_to(message, "❌ Доступ к боту ограничен.")
+        return
+    
+    with sessions_lock:
+        current_zone = sessions.get(chat_id, {}).get("zone_key", "brest")
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+    
+    zone_name = get_zone_name(current_zone)
+    bot.send_message(
+        chat_id,
+        f"🌍 <b>Текущая зона: {zone_name}</b>\nВыберите другую зону ожидания:",
+        reply_markup=get_zone_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("zone_"))
+def handle_zone_selection(call):
+    """Обработка выбора зоны"""
+    chat_id = call.message.chat.id
+    if is_user_blocked(chat_id):
+        return
+    
+    try:
+        zone_key = call.data.replace("zone_", "")
+        if zone_key not in ZONES:
+            bot.answer_callback_query(call.id, "❌ Неизвестная зона")
+            return
+        
+        with sessions_lock:
+            if chat_id not in sessions:
+                sessions[chat_id] = {
+                    "car_filter": None,
+                    "last_cars": [],
+                    "alarm_enabled": False,
+                    "last_called_state": False,
+                    "zone_key": zone_key
+                }
+            else:
+                sessions[chat_id]["zone_key"] = zone_key
+            
+            alarm_on = sessions[chat_id].get("alarm_enabled", False)
+        
+        zone_name = get_zone_name(zone_key)
+        bot.answer_callback_query(call.id, f"✅ Зона выбрана: {zone_name}")
+        
+        # Если мониторинг уже запущен, остановим его
+        if is_monitoring(chat_id):
+            stop_monitoring(chat_id)
+        
+        bot.send_message(
+            chat_id,
+            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг командой /start",
+            reply_markup=get_main_keyboard(alarm_on, chat_id),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
 
 
 @bot.message_handler(commands=["users"])
@@ -556,7 +669,10 @@ def set_preset_interval(call):
         pass
     interval = 3 if call.data == "int_3" else 10
     
-    if not start_monitoring(chat_id, interval):
+    with sessions_lock:
+        zone_key = sessions.get(chat_id, {}).get("zone_key", "brest")
+    
+    if not start_monitoring(chat_id, interval, zone_key):
         with sessions_lock:
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
@@ -569,9 +685,10 @@ def set_preset_interval(call):
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
+    zone_name = get_zone_name(zone_key)
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...",
+        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
@@ -615,7 +732,11 @@ def process_custom_step(message):
         )
         return
 
-    if not start_monitoring(chat_id, minutes):
+    with sessions_lock:
+        zone_key = sessions.get(chat_id, {}).get("zone_key", "brest")
+        alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
+    if not start_monitoring(chat_id, minutes, zone_key):
         with sessions_lock:
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
@@ -625,12 +746,13 @@ def process_custom_step(message):
         )
         return
     
+    zone_name = get_zone_name(zone_key)
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...",
+        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
@@ -663,7 +785,7 @@ def enable_alarm(message):
     chat_id = message.chat.id
     with sessions_lock:
         if chat_id not in sessions:
-            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
         sessions[chat_id]["alarm_enabled"] = True
 
     bot.reply_to(
@@ -680,7 +802,7 @@ def disable_alarm(message):
     chat_id = message.chat.id
     with sessions_lock:
         if chat_id not in sessions:
-            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
         sessions[chat_id]["alarm_enabled"] = False
 
     bot.reply_to(
@@ -710,12 +832,12 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи", "🌍 Зона"]:
         return
 
     with sessions_lock:
         if chat_id not in sessions:
-            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False}
+            sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
         sessions[chat_id]["car_filter"] = text
         alarm_on = sessions[chat_id]["alarm_enabled"]
 
@@ -751,7 +873,7 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи"]:
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи", "🌍 Зона"]:
         return
 
     with sessions_lock:
