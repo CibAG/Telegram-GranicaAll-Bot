@@ -29,7 +29,6 @@ ZONES = {
     "brest": {
         "name": "Брест",
         "url": "https://mon.declarant.by/#/zone/brest-bts",
-        # UUID из mon.declarant.by (slug в API не работает)
         "checkpoint_id": "a9173a85-3fc0-424c-84f0-defa632481e4",
         "base_url": "https://belarusborder.by/info",
     },
@@ -141,10 +140,10 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
     markup.row(
         telebot.types.KeyboardButton("🌍 Зона"),
         telebot.types.KeyboardButton("🚗 Фильтр машины"),
-        telebot.types.KeyboardButton("❌ Снять фильтр")
+        telebot.types.KeyboardButton(" Снять фильтр")
     )
     
-    # ИСПРАВЛЕНО: текст кнопки отражает ДЕЙСТВИЕ, которое произойдет при нажатии
+    # Текст кнопки отражает ДЕЙСТВИЕ, которое произойдет при нажатии
     alarm_text = "🔕 Выключить сирену" if alarm_status else "🔔 Включить сирену"
     
     if chat_id == ADMIN_CHAT_ID:
@@ -163,8 +162,8 @@ def get_zone_keyboard():
     """Клавиатура выбора зоны ожидания"""
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton("🛑 Брест", callback_data="zone_brest"),
-        telebot.types.InlineKeyboardButton("🛑 Берестовица", callback_data="zone_berestovitsa"),
+        telebot.types.InlineKeyboardButton(" Брест", callback_data="zone_brest"),
+        telebot.types.InlineKeyboardButton(" Берестовица", callback_data="zone_berestovitsa"),
         telebot.types.InlineKeyboardButton("🛑 Брузги", callback_data="zone_bruzgi")
     )
     return markup
@@ -363,7 +362,7 @@ def trigger_alarm(chat_id, reg_num):
     try:
         bot.send_message(
             chat_id,
-            f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
+            f" <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
             parse_mode="HTML"
         )
         
@@ -372,7 +371,7 @@ def trigger_alarm(chat_id, reg_num):
                 bot.send_voice(chat_id, audio, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
         else:
             alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
-            bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
+            bot.send_audio(chat_id, alarm_audio_url, caption=" Тревога! Ваша машина вызвана в пункт пропуска!")
             
     except Exception as e:
         print(f"Ошибка отправки сирены: {e}")
@@ -413,7 +412,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None):
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
-        f"📊 <b>Мониторинг ПП границы {zone_name}</b>\n"
+        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -621,6 +620,7 @@ def handle_zone_selection(call):
         zone_name = get_zone_name(zone_key)
         bot.answer_callback_query(call.id, f"✅ Зона выбрана: {zone_name}")
 
+        # ИСПРАВЛЕНО: отправляем только ОДНО сообщение в зависимости от состояния
         if was_running and saved_interval:
             if start_monitoring(chat_id, saved_interval, zone_key):
                 bot.send_message(
@@ -631,10 +631,20 @@ def handle_zone_selection(call):
                     parse_mode="HTML",
                 )
                 return
-
+            else:
+                bot.send_message(
+                    chat_id,
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
+                    f"⚠️ Не удалось перезапустить мониторинг. Запустите кнопкой «🚀 Старт».",
+                    reply_markup=get_main_keyboard(saved_alarm, chat_id),
+                    parse_mode="HTML",
+                )
+                return
+        
+        # Если мониторинг не был запущен
         bot.send_message(
             chat_id,
-            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
+            f" <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
             reply_markup=get_main_keyboard(saved_alarm, chat_id),
             parse_mode="HTML",
         )
@@ -643,7 +653,7 @@ def handle_zone_selection(call):
 
 
 @bot.message_handler(commands=["users"])
-@bot.message_handler(func=lambda message: message.text == "👥 Пользователи")
+@bot.message_handler(func=lambda message: message.text == " Пользователи")
 def show_users(message):
     if message.chat.id != ADMIN_CHAT_ID:
         return
@@ -796,7 +806,7 @@ def process_custom_step(message):
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
             chat_id,
-            "⚠️ Мониторинг уже запущен!",
+            "️ Мониторинг уже запущен!",
             reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
@@ -835,7 +845,7 @@ def stop(message):
 
 
 @bot.message_handler(commands=["alarm_on"])
-@bot.message_handler(func=lambda message: message.text == "🔔 Включить сирену")
+@bot.message_handler(func=lambda message: message.text == " Включить сирену")
 def enable_alarm(message):
     chat_id = message.chat.id
     with sessions_lock:
@@ -869,7 +879,7 @@ def disable_alarm(message):
 
 
 @bot.message_handler(commands=["filter"])
-@bot.message_handler(func=lambda message: message.text == "🚗 Фильтр машины")
+@bot.message_handler(func=lambda message: message.text == " Фильтр машины")
 def ask_car_filter(message):
     chat_id = message.chat.id
     with sessions_lock:
@@ -887,8 +897,7 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    # ИСПРАВЛЕНО: обновлены названия кнопок в списке игнорирования
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Включить сирену", "🔕 Выключить сирену", "👥 Пользователи", "🌍 Зона"]:
+    if text.startswith("/") or text in ["🚀 Старт", " Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Включить сирену", "🔕 Выключить сирену", "👥 Пользователи", "🌍 Зона"]:
         return
 
     with sessions_lock:
@@ -929,7 +938,6 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    # ИСПРАВЛЕНО: обновлены названия кнопок в списке игнорирования
     if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Включить сирену", "🔕 Выключить сирену", "👥 Пользователи", "🌍 Зона"]:
         return
 
@@ -970,7 +978,7 @@ def handle_car_search(message):
             f"🔍 <b>Результат поиска:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
             f"🚗 <b>Позиция:</b> <b>{position}</b>-я\n"
-            f"📋 <b>Статус:</b> {html.escape(str(status))}\n"
+            f" <b>Статус:</b> {html.escape(str(status))}\n"
             f"━━━━━━━━━━━━━━━"
         )
     else:
