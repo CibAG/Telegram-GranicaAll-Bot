@@ -27,21 +27,22 @@ ZONES = {
     "brest": {
         "name": "Брест",
         "url": "https://mon.declarant.by/#/zone/brest-bts",
-        "checkpoint_id": "brest-bts",
-        "base_url": "https://belarusborder.by/info"
+        # UUID из mon.declarant.by (slug в API не работает)
+        "checkpoint_id": "a9173a85-3fc0-424c-84f0-defa632481e4",
+        "base_url": "https://belarusborder.by/info",
     },
     "berestovitsa": {
         "name": "Берестовица",
         "url": "https://mon.declarant.by/#/zone/berestovitsa",
-        "checkpoint_id": "berestovitsa",
-        "base_url": "https://belarusborder.by/info"
+        "checkpoint_id": "7e46a2d1-ab2f-11ec-bafb-ac1f6bf889c1",
+        "base_url": "https://belarusborder.by/info",
     },
     "bruzgi": {
         "name": "Брузги",
         "url": "https://mon.declarant.by/#/zone/bruzgi",
-        "checkpoint_id": "bruzgi",
-        "base_url": "https://belarusborder.by/info"
-    }
+        "checkpoint_id": "3b797d4d-706a-440f-a1a4-826c191e1e36",
+        "base_url": "https://belarusborder.by/info",
+    },
 }
 
 sessions_lock = threading.Lock()
@@ -136,10 +137,13 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
         telebot.types.KeyboardButton("🛑 Стоп")
     )
     markup.row(
+        telebot.types.KeyboardButton("🌍 Зона"),
         telebot.types.KeyboardButton("🚗 Фильтр машины"),
         telebot.types.KeyboardButton("❌ Снять фильтр")
     )
-    alarm_text = "🔔 Сирена: ВКЛ" if alarm_status else "🔕 Сирена: ВЫКЛ"
+    
+    # ИСПРАВЛЕНО: текст кнопки отражает ДЕЙСТВИЕ, которое произойдет при нажатии
+    alarm_text = "🔕 Выключить сирену" if alarm_status else "🔔 Включить сирену"
     
     if chat_id == ADMIN_CHAT_ID:
         markup.row(
@@ -185,7 +189,18 @@ def get_zone_name(zone_key: str) -> str:
 def is_monitoring(chat_id: int) -> bool:
     with sessions_lock:
         session = sessions.get(chat_id)
-        return bool(session and session["thread"].is_alive())
+        thread = session.get("thread") if session else None
+        return bool(thread and thread.is_alive())
+
+
+def _safe_json(response):
+    """Разобрать JSON; пустой/невалидный ответ -> {}."""
+    if not response.content:
+        return {}
+    try:
+        return response.json()
+    except Exception:
+        return {}
 
 
 def fetch_data(zone_key: str = "brest"):
@@ -198,21 +213,30 @@ def fetch_data(zone_key: str = "brest"):
         session_req = requests.Session()
         session_req.trust_env = False
         no_proxy = {"http": None, "https": None}
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://mon.declarant.by",
+            "Referer": "https://mon.declarant.by/",
+        }
 
-        stats = session_req.get(
+        stats = _safe_json(session_req.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
-            proxies=no_proxy
-        ).json()
-        queue = session_req.get(
+            proxies=no_proxy,
+            headers=headers,
+        ))
+        queue = _safe_json(session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
-            proxies=no_proxy
-        ).json()
+            proxies=no_proxy,
+            headers=headers,
+        ))
+        if not queue:
+            return {"error": "API очереди вернул пустой ответ"}
 
-        cars = queue.get("carLiveQueue", [])
+        cars = queue.get("carLiveQueue", []) or []
         
         sorted_cars = []
         if cars:
@@ -387,7 +411,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None):
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
-        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
+        f"📊 <b>Мониторинг ПП границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -440,7 +464,8 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
         return False
     with sessions_lock:
         session = sessions.get(chat_id)
-        if session and session["thread"].is_alive():
+        thread = session.get("thread") if session else None
+        if thread and thread.is_alive():
             return False
             
         stop_event = threading.Event()
@@ -470,13 +495,23 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
 def stop_monitoring(chat_id: int) -> bool:
     with sessions_lock:
         session = sessions.get(chat_id)
-        if not session or not session["thread"].is_alive():
-            sessions.pop(chat_id, None)
+        if not session:
             return False
-        session["stop_event"].set()
-        session["thread"].join(timeout=2)
-        sessions.pop(chat_id, None)
-        return True
+        thread = session.get("thread")
+        was_alive = bool(thread and thread.is_alive())
+        if was_alive:
+            session["stop_event"].set()
+            thread.join(timeout=2)
+        # Сохраняем настройки пользователя после остановки
+        sessions[chat_id] = {
+            "car_filter": session.get("car_filter"),
+            "last_cars": [],
+            "alarm_enabled": session.get("alarm_enabled", False),
+            "last_called_state": False,
+            "zone_key": session.get("zone_key", "brest"),
+            "interval": session.get("interval"),
+        }
+        return was_alive
 
 
 @bot.message_handler(commands=["start"])
@@ -556,32 +591,50 @@ def handle_zone_selection(call):
             bot.answer_callback_query(call.id, "❌ Неизвестная зона")
             return
         
+        was_running = is_monitoring(chat_id)
+        saved_interval = None
+        saved_filter = None
+        saved_alarm = False
+
         with sessions_lock:
-            if chat_id not in sessions:
-                sessions[chat_id] = {
-                    "car_filter": None,
-                    "last_cars": [],
-                    "alarm_enabled": False,
-                    "last_called_state": False,
-                    "zone_key": zone_key
-                }
-            else:
-                sessions[chat_id]["zone_key"] = zone_key
-            
-            alarm_on = sessions[chat_id].get("alarm_enabled", False)
-        
+            old = sessions.get(chat_id, {})
+            saved_interval = old.get("interval")
+            saved_filter = old.get("car_filter")
+            saved_alarm = old.get("alarm_enabled", False)
+
+        if was_running:
+            stop_monitoring(chat_id)
+
+        with sessions_lock:
+            sessions[chat_id] = {
+                "car_filter": saved_filter,
+                "last_cars": [],
+                "alarm_enabled": saved_alarm,
+                "last_called_state": False,
+                "zone_key": zone_key,
+            }
+            if saved_interval is not None:
+                sessions[chat_id]["interval"] = saved_interval
+
         zone_name = get_zone_name(zone_key)
         bot.answer_callback_query(call.id, f"✅ Зона выбрана: {zone_name}")
-        
-        # Если мониторинг уже запущен, остановим его
-        if is_monitoring(chat_id):
-            stop_monitoring(chat_id)
-        
+
+        if was_running and saved_interval:
+            if start_monitoring(chat_id, saved_interval, zone_key):
+                bot.send_message(
+                    chat_id,
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
+                    f"Мониторинг перезапущен (каждые {saved_interval} мин).",
+                    reply_markup=get_main_keyboard(saved_alarm, chat_id),
+                    parse_mode="HTML",
+                )
+                return
+
         bot.send_message(
             chat_id,
-            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг командой /start",
-            reply_markup=get_main_keyboard(alarm_on, chat_id),
-            parse_mode="HTML"
+            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
+            reply_markup=get_main_keyboard(saved_alarm, chat_id),
+            parse_mode="HTML",
         )
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
@@ -780,7 +833,7 @@ def stop(message):
 
 
 @bot.message_handler(commands=["alarm_on"])
-@bot.message_handler(func=lambda message: message.text == "🔔 Сирена: ВКЛ")
+@bot.message_handler(func=lambda message: message.text == "🔔 Включить сирену")
 def enable_alarm(message):
     chat_id = message.chat.id
     with sessions_lock:
@@ -790,14 +843,14 @@ def enable_alarm(message):
 
     bot.reply_to(
         message,
-        "🔔 <b>Громкая сирена включена!</b>",
+        "🔔 <b>Громкая сирена включена!</b> Вы получите уведомление, когда машина будет вызвана в ПП.",
         reply_markup=get_main_keyboard(True, chat_id),
         parse_mode="HTML"
     )
 
 
 @bot.message_handler(commands=["alarm_off"])
-@bot.message_handler(func=lambda message: message.text == "🔕 Сирена: ВЫКЛ")
+@bot.message_handler(func=lambda message: message.text == "🔕 Выключить сирену")
 def disable_alarm(message):
     chat_id = message.chat.id
     with sessions_lock:
@@ -832,7 +885,8 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     text = message.text.strip()
     
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи", "🌍 Зона"]:
+    # ИСПРАВЛЕНО: обновлены названия кнопок в списке игнорирования
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Включить сирену", "🔕 Выключить сирену", "👥 Пользователи", "🌍 Зона"]:
         return
 
     with sessions_lock:
@@ -873,7 +927,8 @@ def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
 
-    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Сирена: ВКЛ", "🔕 Сирена: ВЫКЛ", "👥 Пользователи", "🌍 Зона"]:
+    # ИСПРАВЛЕНО: обновлены названия кнопок в списке игнорирования
+    if text.startswith("/") or text in ["🚀 Старт", "🛑 Стоп", "🚗 Фильтр машины", "❌ Снять фильтр", "🔔 Включить сирену", "🔕 Выключить сирену", "👥 Пользователи", "🌍 Зона"]:
         return
 
     with sessions_lock:
