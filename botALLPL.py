@@ -20,7 +20,9 @@ os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
 # --- Настройки администратора ---
-ADMIN_CHAT_ID = 8878062282
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+if ADMIN_CHAT_ID == 0:
+    raise SystemExit("ADMIN_CHAT_ID не задан в .env")
 
 # --- Зоны ожидания ---
 ZONES = {
