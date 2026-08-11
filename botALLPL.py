@@ -124,7 +124,7 @@ def load_config(path="bot_config.json"):
 config = load_config()
 API_TOKEN = os.getenv("API_TOKEN", "").strip() or config.get("api_token")
 if not API_TOKEN:
-    raise SystemExit(" API_TOKEN не задан в .env или bot_config.json")
+    raise SystemExit("❌ API_TOKEN не задан в .env или bot_config.json")
 
 QUERY_TOKEN = config.get("query_token", "test")
 
@@ -188,7 +188,7 @@ def get_report_keyboard(zone_key: str = "brest"):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton(
-            f" Сайт мониторинга {zone['name']}",
+            f"🔗 Сайт мониторинга {zone['name']}",
             url=zone["url"]
         )
     )
@@ -375,7 +375,7 @@ def trigger_alarm(chat_id, reg_num):
     try:
         bot.send_message(
             chat_id,
-            f" <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
+            f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
             parse_mode="HTML"
         )
         
@@ -384,7 +384,7 @@ def trigger_alarm(chat_id, reg_num):
                 bot.send_voice(chat_id, audio, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
         else:
             alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
-            bot.send_audio(chat_id, alarm_audio_url, caption=" Тревога! Ваша машина вызвана в пункт пропуска!")
+            bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога! Ваша машина вызвана в пункт пропуска!")
             
     except Exception as e:
         print(f"Ошибка отправки сирены: {e}")
@@ -414,7 +414,7 @@ def get_car_status_line(cars, target_query, stats_hour):
                 time_formatted = f"~{h}ч {m}мин" if h else f"~{m}мин"
                 eta_str = f" | Ожидание: <b>{time_formatted}</b>"
             
-            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
+            return f" <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
     
     return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
@@ -425,7 +425,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None):
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
-        f" <b>Мониторинг границы {zone_name}</b>\n"
+        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -578,7 +578,7 @@ def select_zone(message):
     """Выбор зоны ожидания"""
     chat_id = message.chat.id
     if is_user_blocked(chat_id):
-        bot.reply_to(message, "❌ Доступ к боту ограничен.")
+        bot.reply_to(message, " Доступ к боту ограничен.")
         return
     
     with sessions_lock:
@@ -649,7 +649,7 @@ def handle_zone_selection(call):
             else:
                 bot.send_message(
                     chat_id,
-                    f" <b>Зона изменена на: {zone_name}</b>\n"
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
                     f"️ Не удалось перезапустить мониторинг. Запустите кнопкой «🚀 Старт».",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -685,13 +685,13 @@ def show_users(message):
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
-    text = f"👥 <b>Список пользователей ({len(rows)}):</b>\n\n"
+    text = f" <b>Список пользователей ({len(rows)}):</b>\n\n"
     for row in rows:
         chat_id, username, first_name, last_name, joined_at, is_blocked = row
         uname = f"@{username}" if username else "нет юзернейма"
         name = f"{first_name} {last_name}".strip()
         
-        status_icon = "🔴 Заблокирован" if is_blocked == 1 else "✅ Активен"
+        status_icon = " Заблокирован" if is_blocked == 1 else "✅ Активен"
         
         text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at} | {status_icon}\n\n"
         
@@ -757,7 +757,7 @@ def set_preset_interval(call):
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
         bot.send_message(
             chat_id,
-            "️ Мониторинг уже запущен!",
+            "⚠️ Мониторинг уже запущен!",
             reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
@@ -808,7 +808,7 @@ def process_custom_step(message):
             raise ValueError()
     except (ValueError, AttributeError, TypeError):
         bot.send_message(
-            chat_id, "❌ Ошибка: введите целое число от 1 до 1440."
+            chat_id, " Ошибка: введите целое число от 1 до 1440."
         )
         return
 
@@ -1006,7 +1006,7 @@ def handle_car_search(message):
             f"━━━━━━━━━━━━━━━"
         )
     else:
-        response_text = f"❌ Машина <b>{html.escape(text)}</b> не найдена."
+        response_text = f" Машина <b>{html.escape(text)}</b> не найдена."
 
     bot.reply_to(message, response_text, parse_mode="HTML")
 
@@ -1015,28 +1015,30 @@ _bot_initialized = False
 
 
 def run_telegram_bot():
-    global _bot_initialized
-    if _bot_initialized:
-        return
-    _bot_initialized = True
-
+    print("🤖 [BOT] Запуск потока Telegram бота...")
     time.sleep(3)
     try:
+        print("🤖 [BOT] Очистка вебхуков...")
         requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
             timeout=10,
         )
-    except Exception:
-        pass
+        print("✅ [BOT] Вебхуки очищены. Запуск polling...")
+    except Exception as e:
+        print(f"⚠️ [BOT] Ошибка при очистке вебхуков: {e}")
 
     while True:
         try:
+            print("🔄 [BOT] Подключение к Telegram API (polling)...")
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
+            print(f"❌ [BOT] Ошибка polling, перезапуск через 5 сек: {e}")
             time.sleep(5)
 
 
-threading.Thread(target=run_telegram_bot, daemon=True).start()
+# Запускаем бота в отдельном потоке (daemon=False для стабильности на Render)
+threading.Thread(target=run_telegram_bot, daemon=False).start()
 
 if __name__ == "__main__":
+    print("🌐 [FLASK] Запуск веб-сервера на порту 10000...")
     app.run(host="0.0.0.0", port=10000)
