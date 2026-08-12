@@ -86,13 +86,20 @@ def init_db():
                     first_name TEXT,
                     last_name TEXT,
                     joined_at TEXT,
-                    is_blocked INTEGER DEFAULT 0
+                    is_blocked INTEGER DEFAULT 0,
+                    last_activity TEXT,
+                    message_count INTEGER DEFAULT 0
                 )
             """)
+            # Добавляем новые колонки если их нет
             try:
-                cursor.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
+                cursor.execute("ALTER TABLE users ADD COLUMN last_activity TEXT")
             except sqlite3.OperationalError:
-                pass  # Колонка уже существует
+                pass
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN message_count INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
             conn.close()
         sys.stdout.write("✅ База данных инициализирована\n")
@@ -102,6 +109,23 @@ def init_db():
         sys.stdout.flush()
 
 init_db()
+
+def update_user_activity(chat_id):
+    """Обновляет последнюю активность и счётчик сообщений"""
+    try:
+        with db_lock:
+            conn = sqlite3.connect("bot_users.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users 
+                SET last_activity = ?, message_count = message_count + 1
+                WHERE chat_id = ?
+            """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), chat_id))
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        sys.stdout.write(f"⚠️ Ошибка обновления активности: {e}\n")
+        sys.stdout.flush()
 
 def save_user_to_db(message):
     try:
@@ -115,13 +139,16 @@ def save_user_to_db(message):
             conn = sqlite3.connect("bot_users.db")
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, joined_at, is_blocked)
-                VALUES (?, ?, ?, ?, ?, 0)
-            """, (chat_id, username, first_name, last_name, joined_at))
+                INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, joined_at, is_blocked, last_activity, message_count)
+                VALUES (?, ?, ?, ?, ?, 0, ?, 0)
+            """, (chat_id, username, first_name, last_name, joined_at, joined_at))
             conn.commit()
             conn.close()
+        
+        # Обновляем активность
+        update_user_activity(chat_id)
     except Exception as e:
-        sys.stdout.write(f"⚠️ Ошибка сохранения пользователя: {e}\n")
+        sys.stdout.write(f"️ Ошибка сохранения пользователя: {e}\n")
         sys.stdout.flush()
 
 
@@ -153,7 +180,7 @@ def load_config(path="bot_config.json"):
 config = load_config()
 API_TOKEN = os.getenv("API_TOKEN", "").strip() or config.get("api_token")
 if not API_TOKEN:
-    sys.stdout.write("❌ ОШИБКА: API_TOKEN не задан!\n")
+    sys.stdout.write(" ОШИБКА: API_TOKEN не задан!\n")
     sys.stdout.flush()
     sys.exit(1)
 
@@ -433,7 +460,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None):
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     return (
-        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
+        f" <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -473,7 +500,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                     reply_markup=get_report_keyboard(zone_key),
                 )
             except Exception as e:
-                sys.stdout.write(f"⚠️ Ошибка отправки отчета: {e}\n")
+                sys.stdout.write(f"️ Ошибка отправки отчета: {e}\n")
                 sys.stdout.flush()
 
         for _ in range(interval * 60):
@@ -545,6 +572,7 @@ def start(message):
         bot.reply_to(message, "❌ Доступ к боту ограничен.")
         return
         
+    update_user_activity(message.chat.id)
     save_user_to_db(message)
     chat_id = message.chat.id
     with sessions_lock:
@@ -582,6 +610,8 @@ def select_zone(message):
         bot.reply_to(message, "❌ Доступ к боту ограничен.")
         return
     
+    update_user_activity(chat_id)
+    
     with sessions_lock:
         current_zone = sessions.get(chat_id, {}).get("zone_key", "brest")
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
@@ -601,10 +631,12 @@ def handle_zone_selection(call):
     if is_user_blocked(chat_id):
         return
     
+    update_user_activity(chat_id)
+    
     try:
         zone_key = call.data.replace("zone_", "")
         if zone_key not in ZONES:
-            bot.answer_callback_query(call.id, "❌ Неизвестная зона")
+            bot.answer_callback_query(call.id, " Неизвестная зона")
             return
         
         was_running = is_monitoring(chat_id)
@@ -639,7 +671,7 @@ def handle_zone_selection(call):
             if start_monitoring(chat_id, saved_interval, zone_key):
                 bot.send_message(
                     chat_id,
-                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
+                    f" <b>Зона изменена на: {zone_name}</b>\n"
                     f"Мониторинг перезапущен (каждые {saved_interval} мин).",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -648,7 +680,7 @@ def handle_zone_selection(call):
             else:
                 bot.send_message(
                     chat_id,
-                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
+                    f" <b>Зона изменена на: {zone_name}</b>\n"
                     f"⚠️ Не удалось перезапустить мониторинг.",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -657,7 +689,7 @@ def handle_zone_selection(call):
         
         bot.send_message(
             chat_id,
-            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
+            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой « Старт».",
             reply_markup=get_main_keyboard(saved_alarm, chat_id),
             parse_mode="HTML",
         )
@@ -671,10 +703,12 @@ def show_users(message):
     if message.chat.id != ADMIN_CHAT_ID:
         return
 
+    update_user_activity(message.chat.id)
+
     with db_lock:
         conn = sqlite3.connect("bot_users.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT chat_id, username, first_name, last_name, joined_at, is_blocked FROM users")
+        cursor.execute("SELECT chat_id, username, first_name, last_name, joined_at, is_blocked, last_activity, message_count FROM users ORDER BY last_activity DESC")
         rows = cursor.fetchall()
         conn.close()
 
@@ -683,48 +717,101 @@ def show_users(message):
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
-    text = f"👥 <b>Список пользователей ({len(rows)}):</b>\n\n"
+    text = f" <b>Пользователи ({len(rows)}):</b>\n\n"
+    
+    now = datetime.now()
+    
     for row in rows:
-        chat_id, username, first_name, last_name, joined_at, is_blocked = row
+        chat_id, username, first_name, last_name, joined_at, is_blocked, last_activity, message_count = row
         uname = f"@{username}" if username else "нет юзернейма"
         name = f"{first_name} {last_name}".strip()
-        status_icon = "🔴 Заблокирован" if is_blocked == 1 else "✅ Активен"
         
-        text += f"• <b>{html.escape(name)}</b> ({uname})\n  ID: <code>{chat_id}</code> | {joined_at} | {status_icon}\n\n"
+        # Статус активности
+        if last_activity:
+            try:
+                last_act_time = datetime.strptime(last_activity, "%Y-%m-%d %H:%M:%S")
+                diff = now - last_act_time
+                if diff.total_seconds() < 60:
+                    activity_status = "🟢 Только что"
+                elif diff.total_seconds() < 3600:
+                    mins = int(diff.total_seconds() / 60)
+                    activity_status = f"🟢 {mins} мин назад"
+                elif diff.total_seconds() < 86400:
+                    hours = int(diff.total_seconds() / 3600)
+                    activity_status = f"🟡 {hours} ч назад"
+                else:
+                    days = int(diff.total_seconds() / 86400)
+                    activity_status = f"🔴 {days} дн назад"
+            except:
+                activity_status = " Неизвестно"
+        else:
+            activity_status = "⚪ Неизвестно"
+        
+        status_icon = "🔴 Заблок." if is_blocked == 1 else "✅ Активен"
+        
+        text += f"• <b>{html.escape(name)}</b> ({uname})\n"
+        text += f"  ID: <code>{chat_id}</code>\n"
+        text += f"  {status_icon} | {activity_status} | {message_count} сообщ.\n\n"
         
         if chat_id != ADMIN_CHAT_ID:
-            btn_text = f"🚫 Заблокировать {first_name}" if is_blocked == 0 else f"✅ Разблокировать {first_name}"
-            callback = f"block_{chat_id}" if is_blocked == 0 else f"unblock_{chat_id}"
-            markup.add(telebot.types.InlineKeyboardButton(btn_text, callback_data=callback))
+            if is_blocked == 0:
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f" Заблокировать {first_name}", callback_data=f"block_{chat_id}"
+                ))
+            else:
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f"✅ Разблокировать {first_name}", callback_data=f"unblock_{chat_id}"
+                ))
+            
+            # Кнопка удаления
+            markup.add(telebot.types.InlineKeyboardButton(
+                f"🗑️ Удалить {first_name}", callback_data=f"delete_{chat_id}"
+            ))
 
     bot.reply_to(message, text, parse_mode="HTML", reply_markup=markup if markup.keyboard else None)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("block_") or call.data.startswith("unblock_"))
-def handle_block_toggle(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("block_") or call.data.startswith("unblock_") or call.data.startswith("delete_"))
+def handle_user_action(call):
     if call.message.chat.id != ADMIN_CHAT_ID:
         return
     
     try:
         action, chat_id_str = call.data.split("_")
         target_chat_id = int(chat_id_str)
-        new_status = 1 if action == "block" else 0
-
-        with db_lock:
-            conn = sqlite3.connect("bot_users.db")
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET is_blocked = ? WHERE chat_id = ?", (new_status, target_chat_id))
-            conn.commit()
-            conn.close()
-
-        if new_status == 1:
+        
+        if action == "delete":
+            # Удаление пользователя
+            with db_lock:
+                conn = sqlite3.connect("bot_users.db")
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM users WHERE chat_id = ?", (target_chat_id,))
+                conn.commit()
+                conn.close()
+            
             stop_monitoring(target_chat_id)
-            try:
-                bot.send_message(target_chat_id, "❌ Администратор ограничил вам доступ к боту.")
-            except:
-                pass
+            bot.answer_callback_query(call.id, "✅ Пользователь удалён!")
+        else:
+            # Блокировка/разблокировка
+            new_status = 1 if action == "block" else 0
 
-        bot.answer_callback_query(call.id, "✅ Статус пользователя изменен!")
+            with db_lock:
+                conn = sqlite3.connect("bot_users.db")
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET is_blocked = ? WHERE chat_id = ?", (new_status, target_chat_id))
+                conn.commit()
+                conn.close()
+
+            if new_status == 1:
+                stop_monitoring(target_chat_id)
+                try:
+                    bot.send_message(target_chat_id, "❌ Администратор ограничил вам доступ к боту.")
+                except:
+                    pass
+
+            bot.answer_callback_query(call.id, "✅ Статус пользователя изменен!")
+        
+        # Обновляем список пользователей
         show_users(call.message)
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
@@ -735,6 +822,7 @@ def set_preset_interval(call):
     chat_id = call.message.chat.id
     if is_user_blocked(chat_id):
         return
+    update_user_activity(chat_id)
     try:
         bot.answer_callback_query(call.id)
     except:
@@ -766,6 +854,7 @@ def set_custom(call):
     chat_id = call.message.chat.id
     if is_user_blocked(chat_id):
         return
+    update_user_activity(chat_id)
     try:
         bot.answer_callback_query(call.id)
     except:
@@ -784,6 +873,7 @@ def process_custom_step(message):
     chat_id = message.chat.id
     if is_user_blocked(chat_id):
         return
+    update_user_activity(chat_id)
     try:
         minutes = int(message.text.strip())
         if not (1 <= minutes <= 1440):
@@ -817,6 +907,7 @@ def process_custom_step(message):
 @bot.message_handler(func=lambda message: "стоп" in message.text.lower())
 def stop(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
@@ -830,6 +921,7 @@ def stop(message):
 @bot.message_handler(func=lambda message: "включить" in message.text.lower() and "сирен" in message.text.lower())
 def enable_alarm(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     with sessions_lock:
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
@@ -842,6 +934,7 @@ def enable_alarm(message):
 @bot.message_handler(func=lambda message: "выключить" in message.text.lower() and "сирен" in message.text.lower())
 def disable_alarm(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     with sessions_lock:
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
@@ -854,6 +947,7 @@ def disable_alarm(message):
 @bot.message_handler(func=lambda message: "фильтр" in message.text.lower() and "машины" in message.text.lower() and "снять" not in message.text.lower())
 def ask_car_filter(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
@@ -863,6 +957,7 @@ def ask_car_filter(message):
 
 def save_car_filter_step(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     text = message.text.strip()
     
     if text.startswith("/"):
@@ -881,6 +976,7 @@ def save_car_filter_step(message):
 @bot.message_handler(func=lambda message: "снять" in message.text.lower() and "фильтр" in message.text.lower())
 def remove_car_filter(message):
     chat_id = message.chat.id
+    update_user_activity(chat_id)
     with sessions_lock:
         if chat_id in sessions:
             sessions[chat_id]["car_filter"] = None
@@ -902,6 +998,8 @@ def handle_car_search(message):
     text_lower = text.lower()
     if any(keyword in text_lower for keyword in ["старт", "стоп", "зона", "фильтр", "сирен", "пользователи"]):
         return
+
+    update_user_activity(chat_id)
 
     with sessions_lock:
         session = sessions.get(chat_id)
@@ -948,7 +1046,7 @@ def run_telegram_bot():
     time.sleep(3)
     
     try:
-        sys.stdout.write("🤖 [BOT] Очистка вебхуков...\n")
+        sys.stdout.write(" [BOT] Очистка вебхуков...\n")
         sys.stdout.flush()
         response = requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
