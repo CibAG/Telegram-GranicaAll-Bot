@@ -22,9 +22,10 @@ os.environ.pop("https_proxy", None)
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
-print("=" * 50)
-print("🚀 ЗАПУСК БОТА НА RENDER")
-print("=" * 50)
+sys.stdout.write("=" * 50 + "\n")
+sys.stdout.write("🚀 ЗАПУСК БОТА НА RENDER\n")
+sys.stdout.write("=" * 50 + "\n")
+sys.stdout.flush()
 
 # --- Настройки администратора ---
 try:
@@ -35,12 +36,15 @@ try:
         ADMIN_CHAT_ID = 0
     
     if ADMIN_CHAT_ID == 0:
-        print("❌ ОШИБКА: ADMIN_CHAT_ID не задан!")
+        sys.stdout.write("❌ ОШИБКА: ADMIN_CHAT_ID не задан!\n")
+        sys.stdout.flush()
         sys.exit(1)
     
-    print(f"✅ ADMIN_CHAT_ID: {ADMIN_CHAT_ID}")
+    sys.stdout.write(f"✅ ADMIN_CHAT_ID: {ADMIN_CHAT_ID}\n")
+    sys.stdout.flush()
 except Exception as e:
-    print(f" Ошибка при загрузке ADMIN_CHAT_ID: {e}")
+    sys.stdout.write(f"⚠️ Ошибка при загрузке ADMIN_CHAT_ID: {e}\n")
+    sys.stdout.flush()
     sys.exit(1)
 
 # --- Зоны ожидания ---
@@ -91,9 +95,11 @@ def init_db():
                 pass  # Колонка уже существует
             conn.commit()
             conn.close()
-        print("✅ База данных инициализирована")
+        sys.stdout.write("✅ База данных инициализирована\n")
+        sys.stdout.flush()
     except Exception as e:
-        print(f"️ Ошибка инициализации БД: {e}")
+        sys.stdout.write(f"⚠️ Ошибка инициализации БД: {e}\n")
+        sys.stdout.flush()
 
 init_db()
 
@@ -115,7 +121,8 @@ def save_user_to_db(message):
             conn.commit()
             conn.close()
     except Exception as e:
-        print(f"⚠️ Ошибка сохранения пользователя: {e}")
+        sys.stdout.write(f"⚠️ Ошибка сохранения пользователя: {e}\n")
+        sys.stdout.flush()
 
 
 def is_user_blocked(chat_id: int) -> bool:
@@ -146,18 +153,19 @@ def load_config(path="bot_config.json"):
 config = load_config()
 API_TOKEN = os.getenv("API_TOKEN", "").strip() or config.get("api_token")
 if not API_TOKEN:
-    print("❌ ОШИБКА: API_TOKEN не задан!")
+    sys.stdout.write("❌ ОШИБКА: API_TOKEN не задан!\n")
+    sys.stdout.flush()
     sys.exit(1)
 
 QUERY_TOKEN = config.get("query_token", "test")
 
-print(f"✅ API_TOKEN загружен")
-print(f"✅ QUERY_TOKEN: {QUERY_TOKEN}")
+sys.stdout.write("✅ API_TOKEN загружен\n")
+sys.stdout.write(f"✅ QUERY_TOKEN: {QUERY_TOKEN}\n")
+sys.stdout.write("=" * 50 + "\n")
+sys.stdout.flush()
 
 bot = telebot.TeleBot(API_TOKEN, threaded=True)
 app = Flask(__name__)
-
-print("=" * 50)
 
 
 @app.route("/")
@@ -388,7 +396,8 @@ def trigger_alarm(chat_id, reg_num):
             alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
             bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога!")
     except Exception as e:
-        print(f"️ Ошибка отправки сирены: {e}")
+        sys.stdout.write(f"⚠️ Ошибка отправки сирены: {e}\n")
+        sys.stdout.flush()
 
 
 def get_car_status_line(cars, target_query, stats_hour):
@@ -413,7 +422,7 @@ def get_car_status_line(cars, target_query, stats_hour):
                 time_formatted = f"~{h}ч {m}мин" if h else f"~{m}мин"
                 eta_str = f" | Ожидание: <b>{time_formatted}</b>"
             
-            return f" <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
+            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
     
     return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
@@ -464,7 +473,8 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                     reply_markup=get_report_keyboard(zone_key),
                 )
             except Exception as e:
-                print(f"️ Ошибка отправки отчета: {e}")
+                sys.stdout.write(f"⚠️ Ошибка отправки отчета: {e}\n")
+                sys.stdout.flush()
 
         for _ in range(interval * 60):
             if stop_event.is_set() or is_user_blocked(chat_id):
@@ -594,7 +604,7 @@ def handle_zone_selection(call):
     try:
         zone_key = call.data.replace("zone_", "")
         if zone_key not in ZONES:
-            bot.answer_callback_query(call.id, " Неизвестная зона")
+            bot.answer_callback_query(call.id, "❌ Неизвестная зона")
             return
         
         was_running = is_monitoring(chat_id)
@@ -629,7 +639,7 @@ def handle_zone_selection(call):
             if start_monitoring(chat_id, saved_interval, zone_key):
                 bot.send_message(
                     chat_id,
-                    f" <b>Зона изменена на: {zone_name}</b>\n"
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
                     f"Мониторинг перезапущен (каждые {saved_interval} мин).",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -638,7 +648,7 @@ def handle_zone_selection(call):
             else:
                 bot.send_message(
                     chat_id,
-                    f" <b>Зона изменена на: {zone_name}</b>\n"
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
                     f"⚠️ Не удалось перезапустить мониторинг.",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -746,7 +756,7 @@ def set_preset_interval(call):
     zone_name = get_zone_name(zone_key)
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n Зона: {zone_name}",
+        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
@@ -825,7 +835,7 @@ def enable_alarm(message):
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest"}
         sessions[chat_id]["alarm_enabled"] = True
 
-    bot.reply_to(message, " <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
+    bot.reply_to(message, "🔔 <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
 
 
 @bot.message_handler(commands=["alarm_off"])
@@ -897,7 +907,7 @@ def handle_car_search(message):
         session = sessions.get(chat_id)
         if not session or not session.get("last_cars"):
             alarm_on = session.get("alarm_enabled", False) if session else False
-            bot.reply_to(message, "⚠️ Сначала запустите мониторинг кнопкой « Старт».", reply_markup=get_main_keyboard(alarm_on, chat_id))
+            bot.reply_to(message, "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт».", reply_markup=get_main_keyboard(alarm_on, chat_id))
             return
         cars = session["last_cars"]
 
@@ -932,35 +942,48 @@ def handle_car_search(message):
 # ==================== ЗАПУСК БОТА ====================
 
 def run_telegram_bot():
-    print(" [BOT] Запуск Telegram бота...")
+    sys.stdout.write("🤖 [BOT] Функция run_telegram_bot ЗАПУЩЕНА\n")
+    sys.stdout.flush()
+    
     time.sleep(3)
+    
     try:
-        print("🤖 [BOT] Очистка вебхуков...")
-        requests.get(
+        sys.stdout.write("🤖 [BOT] Очистка вебхуков...\n")
+        sys.stdout.flush()
+        response = requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
             timeout=10,
         )
-        print("✅ [BOT] Вебхуки очищены")
+        sys.stdout.write(f"✅ [BOT] Вебхуки очищены. Статус: {response.status_code}\n")
+        sys.stdout.flush()
     except Exception as e:
-        print(f"⚠️ [BOT] Ошибка при очистке вебхуков: {e}")
+        sys.stdout.write(f"⚠️ [BOT] Ошибка при очистке вебхуков: {e}\n")
+        sys.stdout.flush()
 
     while True:
         try:
-            print("🔄 [BOT] Подключение к Telegram API...")
+            sys.stdout.write("🔄 [BOT] Попытка подключения к Telegram API (polling)...\n")
+            sys.stdout.flush()
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
-            print(f"❌ [BOT] Ошибка polling: {e}")
-            print("🔄 [BOT] Перезапуск через 5 сек...")
+            sys.stdout.write(f"❌ [BOT] Ошибка polling: {e}\n")
+            sys.stdout.flush()
+            sys.stdout.write("🔄 [BOT] Перезапуск через 5 сек...\n")
+            sys.stdout.flush()
             time.sleep(5)
 
 
-# Запускаем бота в фоновом потоке
-bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+# Запускаем бота в фоновом потоке (daemon=False чтобы Render его не убивал)
+sys.stdout.write("🚀 [BOT] Создание потока для Telegram бота...\n")
+sys.stdout.flush()
+bot_thread = threading.Thread(target=run_telegram_bot, daemon=False)
 bot_thread.start()
 
-print("✅ БОТ ГОТОВ К РАБОТЕ")
-print("=" * 50)
+sys.stdout.write("✅ БОТ ГОТОВ К РАБОТЕ\n")
+sys.stdout.write("=" * 50 + "\n")
+sys.stdout.flush()
 
 if __name__ == "__main__":
-    print("🌐 [FLASK] Запуск веб-сервера на порту 10000...")
+    sys.stdout.write("🌐 [FLASK] Запуск веб-сервера на порту 10000...\n")
+    sys.stdout.flush()
     app.run(host="0.0.0.0", port=10000)
