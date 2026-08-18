@@ -110,7 +110,6 @@ def init_db():
 init_db()
 
 def update_user_activity(chat_id):
-    """Обновляет последнюю активность и счётчик сообщений"""
     try:
         with db_lock:
             conn = sqlite3.connect("bot_users.db")
@@ -416,7 +415,7 @@ def trigger_alarm(chat_id, reg_num):
         
         if os.path.exists("alarm.ogg"):
             with open("alarm.ogg", "rb") as audio:
-                bot.send_voice(chat_id, audio, caption=" Тревога!")
+                bot.send_voice(chat_id, audio, caption="🔊 Тревога!")
         else:
             alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
             bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога!")
@@ -447,9 +446,9 @@ def get_car_status_line(cars, target_query, stats_hour):
                 time_formatted = f"~{h}ч {m}мин" if h else f"~{m}мин"
                 eta_str = f" | Ожидание: <b>{time_formatted}</b>"
             
-            return f" <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
+            return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
     
-    return f" <b>{html.escape(target_query)}</b>: не найдена\n"
+    return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
 
 
 def format_uptime(start_time):
@@ -464,8 +463,9 @@ def format_uptime(start_time):
         
         total_minutes = int(diff.total_seconds() / 60)
         
+        # ИСПРАВЛЕНО: заменили "< 1 мин" на "менее 1 мин", чтобы символ "<" не ломал HTML
         if total_minutes < 1:
-            return "< 1 мин"
+            return "менее 1 мин"
         elif total_minutes < 60:
             return f"{total_minutes} мин"
         else:
@@ -481,8 +481,8 @@ def build_report(d, zone_key: str = "brest", car_filter=None, uptime_text=""):
     car_line = get_car_status_line(d.get("sorted_cars", []), car_filter, d.get("stats_hour", 0))
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
-    # Добавляем время работы если оно есть
-    uptime_display = f"⏱️ Мониторинг работает: <b>{uptime_text}</b>\n" if uptime_text else ""
+    # Добавляем html.escape для полной безопасности от спецсимволов
+    uptime_display = f"⏱️ Мониторинг работает: <b>{html.escape(uptime_text)}</b>\n" if uptime_text else ""
     
     return (
         f"📊 <b>Мониторинг границы {zone_name}</b>\n"
@@ -494,7 +494,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None, uptime_text=""):
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
-        f" Статус изменён: {html.escape(str(d['changed']))}\n"
+        f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
         "━━━━━━━━━━━━━━━\n"
         f"{uptime_display}"
         "💡 <i>Мониторинг работает в фоновом режиме.</i>"
@@ -517,7 +517,6 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
 
             check_car_alarm_trigger(cars, current_filter, chat_id)
 
-            # Форматируем время работы
             uptime_text = format_uptime(start_time)
 
             try:
@@ -553,7 +552,7 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
         stop_event = threading.Event()
         thread = threading.Thread(
             target=monitoring_loop,
-            args=(chat_id, stop_event, interval, zone_key, start_time),  # Передаём start_time
+            args=(chat_id, stop_event, interval, zone_key, start_time),
             daemon=True,
         )
         
@@ -713,7 +712,7 @@ def handle_zone_selection(call):
             else:
                 bot.send_message(
                     chat_id,
-                    f" <b>Зона изменена на: {zone_name}</b>\n"
+                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
                     f"⚠️ Не удалось перезапустить мониторинг.",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
@@ -746,7 +745,7 @@ def show_users(message):
         conn.close()
 
     if not rows:
-        bot.reply_to(message, " В базе пока нет ни одного пользователя.")
+        bot.reply_to(message, "📭 В базе пока нет ни одного пользователя.")
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
@@ -767,7 +766,7 @@ def show_users(message):
                     activity_status = "🟢 Только что"
                 elif diff.total_seconds() < 3600:
                     mins = int(diff.total_seconds() / 60)
-                    activity_status = f" {mins} мин назад"
+                    activity_status = f"🟢 {mins} мин назад"
                 elif diff.total_seconds() < 86400:
                     hours = int(diff.total_seconds() / 3600)
                     activity_status = f"🟡 {hours} ч назад"
@@ -779,7 +778,7 @@ def show_users(message):
         else:
             activity_status = "⚪ Неизвестно"
         
-        status_icon = " Заблок." if is_blocked == 1 else "✅ Активен"
+        status_icon = "🔴 Заблок." if is_blocked == 1 else "✅ Активен"
         
         text += f"• <b>{html.escape(name)}</b> ({uname})\n"
         text += f"  ID: <code>{chat_id}</code>\n"
@@ -891,7 +890,7 @@ def set_custom(call):
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     if is_monitoring(chat_id):
-        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     msg = bot.send_message(chat_id, "✍️ Введите количество <b>минут</b> для интервала (число):", parse_mode="HTML")
     bot.register_next_step_handler(msg, process_custom_step)
@@ -1092,7 +1091,7 @@ def run_telegram_bot():
             sys.stdout.flush()
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
-            sys.stdout.write(f" [BOT] Ошибка polling: {e}\n")
+            sys.stdout.write(f"❌ [BOT] Ошибка polling: {e}\n")
             sys.stdout.flush()
             sys.stdout.write("🔄 [BOT] Перезапуск через 5 сек...\n")
             sys.stdout.flush()
