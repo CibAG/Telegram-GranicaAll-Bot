@@ -423,7 +423,7 @@ def trigger_alarm(chat_id, reg_num):
         
         if os.path.exists("alarm.ogg"):
             with open("alarm.ogg", "rb") as audio:
-                bot.send_voice(chat_id, audio, caption="🔊 Тревога!")
+                bot.send_voice(chat_id, audio, caption="🚨 🔊 ВНИМАНИЕ!!!")
         else:
             alarm_audio_url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Air_raid_siren_uk.ogg"
             bot.send_audio(chat_id, alarm_audio_url, caption="🔊 Тревога!")
