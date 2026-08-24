@@ -23,7 +23,7 @@ os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
 sys.stdout.write("=" * 50 + "\n")
-sys.stdout.write(" ЗАПУСК БОТА НА RENDER\n")
+sys.stdout.write("🚀 ЗАПУСК БОТА НА RENDER\n")
 sys.stdout.write("=" * 50 + "\n")
 sys.stdout.flush()
 
@@ -43,7 +43,7 @@ try:
     sys.stdout.write(f"✅ ADMIN_CHAT_ID: {ADMIN_CHAT_ID}\n")
     sys.stdout.flush()
 except Exception as e:
-    sys.stdout.write(f"⚠️ Ошибка при загрузке ADMIN_CHAT_ID: {e}\n")
+    sys.stdout.write(f"️ Ошибка при загрузке ADMIN_CHAT_ID: {e}\n")
     sys.stdout.flush()
     sys.exit(1)
 
@@ -158,7 +158,7 @@ def save_stats_to_db(zone_key: str, stats_hour: int, stats_day: int, total_cars:
             conn.commit()
             conn.close()
     except Exception as e:
-        sys.stdout.write(f"⚠️ Ошибка сохранения статистики: {e}\n")
+        sys.stdout.write(f"️ Ошибка сохранения статистики: {e}\n")
         sys.stdout.flush()
 
 
@@ -302,16 +302,16 @@ def health():
 def get_main_keyboard(alarm_status=False, chat_id=None):
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
-        telebot.types.KeyboardButton("🚀 Старт"),
-        telebot.types.KeyboardButton(" Стоп")
+        telebot.types.KeyboardButton(" Старт"),
+        telebot.types.KeyboardButton("🛑 Стоп")
     )
     markup.row(
-        telebot.types.KeyboardButton("🌍 Зона"),
-        telebot.types.KeyboardButton(" Фильтр машины"),
+        telebot.types.KeyboardButton(" Зона"),
+        telebot.types.KeyboardButton("🚗 Фильтр машины"),
         telebot.types.KeyboardButton("❌ Снять фильтр")
     )
     
-    alarm_text = "🔕 Выключить сирену" if alarm_status else " Включить сирену"
+    alarm_text = "🔕 Выключить сирену" if alarm_status else "🔔 Включить сирену"
     
     if chat_id == ADMIN_CHAT_ID:
         # Для админа: добавляем кнопку настроек (внутри неё "Пользователи" и "Период")
@@ -331,7 +331,7 @@ def get_zone_keyboard():
     markup.add(
         telebot.types.InlineKeyboardButton("🛑 Брест", callback_data="zone_brest"),
         telebot.types.InlineKeyboardButton("🛑 Берестовица", callback_data="zone_berestovitsa"),
-        telebot.types.InlineKeyboardButton("🛑 Брузги", callback_data="zone_bruzgi")
+        telebot.types.InlineKeyboardButton(" Брузги", callback_data="zone_bruzgi")
     )
     return markup
 
@@ -341,7 +341,7 @@ def get_report_keyboard(zone_key: str = "brest"):
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
         telebot.types.InlineKeyboardButton(
-            f"🔗 Сайт мониторинга {zone['name']}",
+            f" Сайт мониторинга {zone['name']}",
             url=zone["url"]
         )
     )
@@ -576,12 +576,12 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
     
     # Показываем, на основе какого периода сделана оценка (Вариант 1: отдельной строкой)
     if history_count > 0:
-        avg_line = f" На основе {history_count} записей за {avg_period} ч\n"
+        avg_line = f"📊 На основе {history_count} записей за {avg_period} ч\n"
     else:
-        avg_line = "📊 По текущим данным\n"
+        avg_line = " По текущим данным\n"
     
     return (
-        f" <b>Мониторинг границы {zone_name}</b>\n"
+        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -606,7 +606,7 @@ def stats_collector_loop():
     Это гарантирует, что история будет накапливаться по всем зонам,
     даже если пользователи смотрят только одну зону.
     """
-    sys.stdout.write(" [STATS] Фоновый сборщик статистики запущен\n")
+    sys.stdout.write("📊 [STATS] Фоновый сборщик статистики запущен\n")
     sys.stdout.flush()
     
     iteration = 0
@@ -633,7 +633,7 @@ def stats_collector_loop():
                         sys.stdout.write(f"✅ [STATS] Сохранена статистика для {zone_key}: {data.get('total', 0)} машин\n")
                         sys.stdout.flush()
                     else:
-                        sys.stdout.write(f"⚠️ [STATS] Ошибка получения данных для {zone_key}: {data['error']}\n")
+                        sys.stdout.write(f"️ [STATS] Ошибка получения данных для {zone_key}: {data['error']}\n")
                         sys.stdout.flush()
                 except Exception as e:
                     sys.stdout.write(f"❌ [STATS] Ошибка сбора для {zone_key}: {e}\n")
@@ -663,7 +663,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
         try:
             iteration += 1
             if iteration % 10 == 0:
-                sys.stdout.write(f" [BOT] Поток {chat_id} жив, ожидание...\n")
+                sys.stdout.write(f"💓 [BOT] Поток {chat_id} жив, ожидание...\n")
                 sys.stdout.flush()
 
             if is_user_blocked(chat_id):
@@ -712,12 +712,12 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 time.sleep(1)
                 
         except Exception as e:
-            sys.stdout.write(f"❌ [BOT] КРИТИЧЕСКАЯ ОШИБКА в потоке {chat_id}: {e}\n")
+            sys.stdout.write(f" [BOT] КРИТИЧЕСКАЯ ОШИБКА в потоке {chat_id}: {e}\n")
             sys.stdout.write(f"🔄 [BOT] Перезапуск потока {chat_id} через 60 секунд...\n")
             sys.stdout.flush()
             time.sleep(60)
     
-    sys.stdout.write(f" [BOT] Поток мониторинга для {chat_id} завершен.\n")
+    sys.stdout.write(f"🛑 [BOT] Поток мониторинга для {chat_id} завершен.\n")
     sys.stdout.flush()
 
 
@@ -801,7 +801,7 @@ def start(message):
     if is_monitoring(chat_id):
         bot.reply_to(
             message,
-            f"⚠️ Мониторинг уже запущен для зоны: {get_zone_name(current_zone)}!",
+            f"️ Мониторинг уже запущен для зоны: {get_zone_name(current_zone)}!",
             reply_markup=get_main_keyboard(alarm_on, chat_id),
         )
         return
@@ -815,7 +815,7 @@ def start(message):
     )
     bot.send_message(
         chat_id,
-        f" <b>Мониторинг границы {zone_name}</b>\nВыберите интервал опроса:",
+        f"🚀 <b>Мониторинг границы {zone_name}</b>\nВыберите интервал опроса:",
         reply_markup=markup,
         parse_mode="HTML",
     )
@@ -911,7 +911,7 @@ def handle_zone_selection(call):
         
         bot.send_message(
             chat_id,
-            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
+            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой « Старт».",
             reply_markup=get_main_keyboard(saved_alarm, chat_id),
             parse_mode="HTML",
         )
@@ -935,12 +935,15 @@ def admin_panel(message):
         telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+        telebot.types.InlineKeyboardButton(" Пользователи", callback_data="admin_users"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
     )
     
     bot.send_message(
         message.chat.id,
-        f"️ <b>Админ-панель</b>\n\nВыберите действие:",
+        f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
         reply_markup=markup,
         parse_mode="HTML"
     )
@@ -996,6 +999,60 @@ def handle_admin_users(call):
     show_users_inline(call.message)
 
 
+@bot.callback_query_handler(func=lambda call: call.data == "admin_backup")
+def handle_admin_backup(call):
+    """Создаёт бэкап базы данных и отправляет админу"""
+    chat_id = call.message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        return
+    
+    bot.answer_callback_query(call.id, "📦 Создание бэкапа...")
+    
+    try:
+        # Отправляем файл базы данных
+        with open("bot_users.db", "rb") as db_file:
+            bot.send_document(
+                chat_id,
+                db_file,
+                caption=f"📊 <b>Бэкап базы данных</b>\n\n"
+                        f" Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+                        f"💾 Файл: bot_users.db\n\n"
+                        f"<i>Для восстановления:</i>\n"
+                        f"1. Остановите бота\n"
+                        f"2. Замените файл bot_users.db на этот\n"
+                        f"3. Задеплойте на Render",
+                parse_mode="HTML"
+            )
+        
+        bot.edit_message_text(
+            "✅ <b>Бэкап базы данных отправлен!</b>\n\n"
+            "Файл bot_users.db содержит:\n"
+            "• Историю статистики по всем зонам\n"
+            "• Список пользователей\n"
+            "• Настройки мониторинга\n\n"
+            "Сохраните его для восстановления после изменений.",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
+        
+    except FileNotFoundError:
+        bot.edit_message_text(
+            "❌ <b>Ошибка:</b> Файл базы данных не найден!\n\n"
+            "Убедитесь, что бот уже работал и создал базу.",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        bot.edit_message_text(
+            f"❌ <b>Ошибка при создании бэкапа:</b> {e}",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "admin_back")
 def handle_admin_back(call):
     """Возврат в админ-панель"""
@@ -1009,6 +1066,9 @@ def handle_admin_back(call):
     )
     markup.add(
         telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton(" Бэкап базы", callback_data="admin_backup"),
     )
     
     bot.edit_message_text(
@@ -1050,7 +1110,7 @@ def show_users_inline(message):
                 last_act_time = datetime.strptime(last_activity, "%Y-%m-%d %H:%M:%S")
                 diff = now - last_act_time
                 if diff.total_seconds() < 60:
-                    activity_status = "🟢 Только что"
+                    activity_status = " Только что"
                 elif diff.total_seconds() < 3600:
                     mins = int(diff.total_seconds() / 60)
                     activity_status = f"🟢 {mins} мин назад"
@@ -1179,7 +1239,7 @@ def handle_user_action(call):
         # Обновляем список пользователей
         show_users_inline(call.message)
     except Exception as e:
-        bot.answer_callback_query(call.id, f" Ошибка: {e}")
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["int_3", "int_10"])
@@ -1228,7 +1288,7 @@ def set_custom(call):
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     if is_monitoring(chat_id):
-        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     msg = bot.send_message(chat_id, "✍️ Введите количество <b>минут</b> для интервала (число):", parse_mode="HTML")
     bot.register_next_step_handler(msg, process_custom_step)
@@ -1305,7 +1365,7 @@ def disable_alarm(message):
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["alarm_enabled"] = False
 
-    bot.reply_to(message, " <b>Громкая сирена выключена.</b>", reply_markup=get_main_keyboard(False, chat_id), parse_mode="HTML")
+    bot.reply_to(message, "🔕 <b>Громкая сирена выключена.</b>", reply_markup=get_main_keyboard(False, chat_id), parse_mode="HTML")
 
 
 @bot.message_handler(commands=["filter"])
@@ -1316,7 +1376,7 @@ def ask_car_filter(message):
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
-    msg = bot.send_message(chat_id, "✍️ Введите гос.номер машины:", reply_markup=get_main_keyboard(alarm_on, chat_id))
+    msg = bot.send_message(chat_id, "️ Введите гос.номер машины:", reply_markup=get_main_keyboard(alarm_on, chat_id))
     bot.register_next_step_handler(msg, save_car_filter_step)
 
 
@@ -1425,13 +1485,13 @@ def run_telegram_bot():
 
     while True:
         try:
-            sys.stdout.write(" [BOT] Попытка подключения к Telegram API (polling)...\n")
+            sys.stdout.write("🔄 [BOT] Попытка подключения к Telegram API (polling)...\n")
             sys.stdout.flush()
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
             sys.stdout.write(f"❌ [BOT] Ошибка polling: {e}\n")
             sys.stdout.flush()
-            sys.stdout.write(" [BOT] Перезапуск через 5 сек...\n")
+            sys.stdout.write("🔄 [BOT] Перезапуск через 5 сек...\n")
             sys.stdout.flush()
             time.sleep(5)
 
@@ -1445,7 +1505,7 @@ bot_thread.start()
 # ==========================================
 # ЗАПУСК ФОНОВОГО СБОРЩИКА СТАТИСТИКИ
 # ==========================================
-sys.stdout.write("📊 [STATS] Создание потока для сборщика статистики...\n")
+sys.stdout.write(" [STATS] Создание потока для сборщика статистики...\n")
 sys.stdout.flush()
 stats_thread = threading.Thread(target=stats_collector_loop, daemon=True)
 stats_thread.start()
@@ -1455,6 +1515,6 @@ sys.stdout.write("=" * 50 + "\n")
 sys.stdout.flush()
 
 if __name__ == "__main__":
-    sys.stdout.write(" [FLASK] Запуск веб-сервера на порту 10000...\n")
+    sys.stdout.write("🌐 [FLASK] Запуск веб-сервера на порту 10000...\n")
     sys.stdout.flush()
     app.run(host="0.0.0.0", port=10000)
