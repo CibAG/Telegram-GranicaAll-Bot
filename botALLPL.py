@@ -326,8 +326,8 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
 def get_zone_keyboard():
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton(" Брест", callback_data="zone_brest"),
-        telebot.types.InlineKeyboardButton(" Берестовица", callback_data="zone_berestovitsa"),
+        telebot.types.InlineKeyboardButton("🛑 Брест", callback_data="zone_brest"),
+        telebot.types.InlineKeyboardButton("🛑 Берестовица", callback_data="zone_berestovitsa"),
         telebot.types.InlineKeyboardButton("🛑 Брузги", callback_data="zone_bruzgi")
     )
     return markup
