@@ -331,7 +331,7 @@ def get_zone_keyboard():
     markup.add(
         telebot.types.InlineKeyboardButton("🛑 Брест", callback_data="zone_brest"),
         telebot.types.InlineKeyboardButton("🛑 Берестовица", callback_data="zone_berestovitsa"),
-        telebot.types.InlineKeyboardButton(" Брузги", callback_data="zone_bruzgi")
+        telebot.types.InlineKeyboardButton("🛑 Брузги", callback_data="zone_bruzgi")
     )
     return markup
 
