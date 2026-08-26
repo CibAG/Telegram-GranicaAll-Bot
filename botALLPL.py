@@ -1476,7 +1476,7 @@ def save_car_filter_step(message):
         sessions[chat_id]["car_filter"] = text
         alarm_on = sessions[chat_id]["alarm_enabled"]
 
-    bot.reply_to(message, f"✅ Фильтр по машине <b>{html.escape(text)}</b> установлен!", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
+    bot.reply_to(message, f"✅ Фильтр по машине <b>{html.escape(text)}</b> установлен! Включите сирену.", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
 
 
 @bot.message_handler(commands=["clear"])
