@@ -23,7 +23,7 @@ os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 
 sys.stdout.write("=" * 50 + "\n")
-sys.stdout.write("🚀 ЗАПУСК БОТА НА RENDER\n")
+sys.stdout.write(" ЗАПУСК БОТА НА RENDER\n")
 sys.stdout.write("=" * 50 + "\n")
 sys.stdout.flush()
 
@@ -124,7 +124,7 @@ def init_db():
         sys.stdout.write("✅ База данных инициализирована (включая таблицу истории)\n")
         sys.stdout.flush()
     except Exception as e:
-        sys.stdout.write(f"⚠️ Ошибка инициализации БД: {e}\n")
+        sys.stdout.write(f"️ Ошибка инициализации БД: {e}\n")
         sys.stdout.flush()
 
 init_db()
@@ -234,7 +234,7 @@ def save_user_to_db(message):
         
         update_user_activity(chat_id)
     except Exception as e:
-        sys.stdout.write(f"️ Ошибка сохранения пользователя: {e}\n")
+        sys.stdout.write(f"⚠️ Ошибка сохранения пользователя: {e}\n")
         sys.stdout.flush()
 
 
@@ -476,146 +476,37 @@ def get_status_text(car):
 
 
 # ==========================================
-# ЖИВАЯ СИРЕНА
+# УПРОЩЕННАЯ СИРЕНА (БЕЗ ПОТОКОВ)
 # ==========================================
 def trigger_alarm(chat_id, reg_num):
-    """Запускает фоновый поток сирены"""
+    """Отправляет однократное уведомление о вызове в ПП"""
     if is_user_blocked(chat_id):
         return
     
-    with sessions_lock:
-        session = sessions.get(chat_id, {})
-        
-        if session.get("alarm_active") and session.get("alarm_reg_num") == reg_num:
-            return
-        
-        session["alarm_active"] = True
-        session["alarm_reg_num"] = reg_num
-        session["alarm_stop_event"] = threading.Event()
-    
-    alarm_thread = threading.Thread(
-        target=alarm_loop,
-        args=(chat_id, reg_num),
-        daemon=True
-    )
-    alarm_thread.start()
-    
-    sys.stdout.write(f"🚨 [ALARM] Сирена запущена для машины {reg_num} (чат {chat_id})\n")
-    sys.stdout.flush()
-
-
-def alarm_loop(chat_id: int, reg_num: str):
-    """Фоновый цикл сирены: отправляет 3 сообщения каждую минуту"""
-    with sessions_lock:
-        stop_event = sessions.get(chat_id, {}).get("alarm_stop_event")
-    
-    if not stop_event:
-        return
-    
-    iteration = 0
-    while not stop_event.is_set():
-        try:
-            iteration += 1
-            
-            with sessions_lock:
-                session = sessions.get(chat_id, {})
-                current_filter = session.get("car_filter")
-                alarm_active = session.get("alarm_active", False)
-                last_cars = session.get("last_cars", [])
-            
-            if not current_filter or not alarm_active:
-                sys.stdout.write(f"🔕 [ALARM] Сирена остановлена: фильтр снят (чат {chat_id})\n")
-                sys.stdout.flush()
-                break
-            
-            car_still_called = False
-            search_query = current_filter.replace(" ", "").lower()
-            
-            for car in last_cars:
-                car_number = str(
-                    car.get("regnum") or car.get("number") or 
-                    car.get("nzp") or car.get("reg_number") or ""
-                ).replace(" ", "").lower()
-                
-                if search_query in car_number or search_query == car_number:
-                    raw_status = car.get("status") or car.get("state") or car.get("statusName")
-                    is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
-                    
-                    if is_called:
-                        car_still_called = True
-                    break
-            
-            if not car_still_called:
-                sys.stdout.write(f"🔕 [ALARM] Сирена остановлена: машина не в статусе 'вызвана в ПП' (чат {chat_id})\n")
-                sys.stdout.flush()
-                
-                with sessions_lock:
-                    if chat_id in sessions:
-                        sessions[chat_id]["alarm_active"] = False
-                
-                try:
-                    bot.send_message(
-                        chat_id,
-                        f"✅ <b>Сирена отключена.</b>\n\n"
-                        f"Машина <b>{html.escape(str(reg_num))}</b> больше не в статусе 'Вызван в ПП'.\n"
-                        f"Возможно, она уже проехала пункт пропуска.",
-                        parse_mode="HTML"
-                    )
-                except:
-                    pass
-                break
-            
-            for i in range(3):
-                if stop_event.is_set():
-                    break
-                try:
-                    bot.send_message(
-                        chat_id,
-                        f"🚨 <b>ВНИМАНИЕ!!! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨\n"
-                        f"⏰ Повторное уведомление #{iteration}",
-                        parse_mode="HTML"
-                    )
-                    time.sleep(1)
-                except Exception as e:
-                    sys.stdout.write(f"⚠️ [ALARM] Ошибка отправки сообщения: {e}\n")
-                    sys.stdout.flush()
-                    break
-            
-            sys.stdout.write(f"⏳ [ALARM] Ожидание 60 сек до следующего уведомления (чат {chat_id})\n")
-            sys.stdout.flush()
-            
-            stop_event.wait(timeout=60)
-            
-        except Exception as e:
-            sys.stdout.write(f"⚠️ [ALARM] Ошибка в цикле сирены: {e}\n")
-            sys.stdout.flush()
-            time.sleep(60)
-    
-    with sessions_lock:
-        if chat_id in sessions:
-            sessions[chat_id]["alarm_active"] = False
-            sessions[chat_id]["alarm_reg_num"] = None
-    
-    sys.stdout.write(f"🛑 [ALARM] Поток сирены завершён для машины {reg_num} (чат {chat_id})\n")
-    sys.stdout.flush()
-
-
-def stop_alarm(chat_id: int):
-    """Останавливает сирену для пользователя"""
-    with sessions_lock:
-        session = sessions.get(chat_id, {})
-        stop_event = session.get("alarm_stop_event")
-        
-        if stop_event:
-            stop_event.set()
-            session["alarm_active"] = False
-            session["alarm_reg_num"] = None
-            sys.stdout.write(f"🔕 [ALARM] Сирена принудительно остановлена (чат {chat_id})\n")
-            sys.stdout.flush()
+    try:
+        bot.send_message(
+            chat_id,
+            f"🚨 <b>ВНИМАНИЕ!!! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨",
+            parse_mode="HTML"
+        )
+        sys.stdout.write(f"🚨 [ALARM] Отправлено уведомление для {reg_num} (чат {chat_id})\n")
+        sys.stdout.flush()
+    except Exception as e:
+        sys.stdout.write(f"⚠️ [ALARM] Ошибка отправки: {e}\n")
+        sys.stdout.flush()
 
 
 def check_car_alarm_trigger(cars, target_query, chat_id):
+    """Проверяет триггер сирены при каждом обновлении"""
     if is_user_blocked(chat_id) or not target_query or not cars:
+        return
+
+    with sessions_lock:
+        session = sessions.get(chat_id, {})
+        alarm_enabled = session.get("alarm_enabled", False)
+        last_called_state = session.get("last_called_state", False)
+    
+    if not alarm_enabled:
         return
 
     search_query = target_query.replace(" ", "").lower()
@@ -629,14 +520,18 @@ def check_car_alarm_trigger(cars, target_query, chat_id):
             raw_status = car.get("status") or car.get("state") or car.get("statusName")
             is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
             
-            with sessions_lock:
-                session = sessions.get(chat_id, {})
+            # Отправляем уведомление ТОЛЬКО при переходе в состояние "вызван"
+            if is_called and not last_called_state:
+                trigger_alarm(chat_id, car.get("regnum") or target_query)
                 
-                if is_called and session.get("alarm_enabled", False):
-                    trigger_alarm(chat_id, car.get("regnum") or target_query)
-                elif not is_called:
-                    if session.get("alarm_active"):
-                        stop_alarm(chat_id)
+                with sessions_lock:
+                    if chat_id in sessions:
+                        sessions[chat_id]["last_called_state"] = True
+            elif not is_called:
+                # Сбрасываем состояние если машина больше не вызвана
+                with sessions_lock:
+                    if chat_id in sessions:
+                        sessions[chat_id]["last_called_state"] = False
             break
 
 
@@ -675,7 +570,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
     interval_text = f" Периодом {interval} мин." if interval else ""
     
     if history_count > 0:
-        avg_line = f" На основе {history_count} записей за {avg_period} ч\n"
+        avg_line = f"📊 На основе {history_count} записей за {avg_period} ч\n"
     else:
         avg_line = "📊 По текущим данным\n"
     
@@ -683,14 +578,14 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
         f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
-        f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
+        f" Машин в очереди: {html.escape(str(d['total']))}\n"
         f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
         f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
         f"{avg_line}"
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
-        f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
+        f" Статус изменён: {html.escape(str(d['changed']))}\n"
         "━━━━━━━━━━━━━━━\n"
         f"💡 <i>Мониторинг работает в фоновом режиме.{interval_text}</i>"
     )
@@ -743,15 +638,15 @@ def stats_collector_loop():
 
 
 # ==========================================
-# НЕУБИВАЕМЫЙ ЦИКЛ МОНИТОРИНГА С АВТОВОССТАНОВЛЕНИЕМ
+# УПРОЩЕННЫЙ ЦИКЛ МОНИТОРИНГА (БЕЗ СЛОЖНЫХ ПРОВЕРОК)
 # ==========================================
 def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zone_key: str = "brest", start_time: str = None):
     sys.stdout.write(f"✅ [BOT] Поток мониторинга для {chat_id} запущен (интервал: {interval} мин)\n")
     sys.stdout.flush()
     
     iteration = 0
-    error_count = 0
-    max_errors = 5
+    consecutive_errors = 0
+    max_consecutive_errors = 3
     
     while not stop_event.is_set():
         try:
@@ -768,21 +663,21 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
             
             data = fetch_data(zone_key)
             if "error" in data:
-                error_count += 1
-                sys.stdout.write(f"⚠️ [BOT] Ошибка API ({error_count}/{max_errors}) для {chat_id}: {data['error']}\n")
+                consecutive_errors += 1
+                sys.stdout.write(f"⚠️ [BOT] Ошибка API ({consecutive_errors}/{max_consecutive_errors}): {data['error']}\n")
                 sys.stdout.flush()
                 
-                if error_count >= max_errors:
+                if consecutive_errors >= max_consecutive_errors:
                     try:
                         bot.send_message(chat_id, f"⚠️ Мониторинг остановлен из-за ошибок API.\nЗапустите заново: /start")
                     except:
                         pass
                     break
                 
-                time.sleep(30)
+                time.sleep(60)
                 continue
             
-            error_count = 0
+            consecutive_errors = 0
             
             with sessions_lock:
                 session = sessions.get(chat_id, {})
@@ -810,20 +705,21 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                     reply_markup=get_report_keyboard(zone_key),
                 )
             except Exception as e:
-                sys.stdout.write(f"⚠️ [BOT] Ошибка отправки отчета {chat_id}: {e}\n")
+                sys.stdout.write(f"⚠️ [BOT] Ошибка отправки: {e}\n")
                 sys.stdout.flush()
 
+            # Ждем интервал
             for _ in range(interval * 60):
-                if stop_event.is_set() or is_user_blocked(chat_id):
+                if stop_event.is_set():
                     break
                 time.sleep(1)
                 
         except Exception as e:
-            error_count += 1
-            sys.stdout.write(f"❌ [BOT] Ошибка в потоке {chat_id} ({error_count}/{max_errors}): {e}\n")
+            consecutive_errors += 1
+            sys.stdout.write(f" [BOT] Ошибка в потоке {chat_id} ({consecutive_errors}/{max_consecutive_errors}): {e}\n")
             sys.stdout.flush()
             
-            if error_count >= max_errors:
+            if consecutive_errors >= max_consecutive_errors:
                 try:
                     bot.send_message(chat_id, f"🚨 Мониторинг остановлен из-за ошибок.\nЗапустите заново: /start")
                 except:
@@ -843,11 +739,18 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     with sessions_lock:
+        # Сначала останавливаем старый поток если есть
         session = sessions.get(chat_id)
-        thread = session.get("thread") if session else None
-        if thread and thread.is_alive():
-            return False
-            
+        if session:
+            old_thread = session.get("thread")
+            if old_thread and old_thread.is_alive():
+                old_stop_event = session.get("stop_event")
+                if old_stop_event:
+                    old_stop_event.set()
+                old_thread.join(timeout=2)
+                sys.stdout.write(f"🔄 [BOT] Остановлен старый поток для {chat_id}\n")
+                sys.stdout.flush()
+        
         stop_event = threading.Event()
         thread = threading.Thread(
             target=monitoring_loop,
@@ -880,13 +783,17 @@ def stop_monitoring(chat_id: int) -> bool:
         session = sessions.get(chat_id)
         if not session:
             return False
+        
         thread = session.get("thread")
         was_alive = bool(thread and thread.is_alive())
-        if was_alive:
-            session["stop_event"].set()
-            thread.join(timeout=2)
         
-        stop_alarm(chat_id)
+        if was_alive:
+            stop_event = session.get("stop_event")
+            if stop_event:
+                stop_event.set()
+            thread.join(timeout=2)
+            sys.stdout.write(f"🛑 [BOT] Остановлен поток для {chat_id}\n")
+            sys.stdout.flush()
         
         sessions[chat_id] = {
             "car_filter": session.get("car_filter"),
@@ -906,7 +813,7 @@ def stop_monitoring(chat_id: int) -> bool:
 @bot.message_handler(func=lambda message: "старт" in message.text.lower())
 def start(message):
     if is_user_blocked(message.chat.id):
-        bot.reply_to(message, " Доступ к боту ограничен.")
+        bot.reply_to(message, "❌ Доступ к боту ограничен.")
         return
         
     update_user_activity(message.chat.id)
@@ -1017,19 +924,10 @@ def handle_zone_selection(call):
                     parse_mode="HTML",
                 )
                 return
-            else:
-                bot.send_message(
-                    chat_id,
-                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
-                    f"⚠️ Не удалось перезапустить мониторинг.",
-                    reply_markup=get_main_keyboard(saved_alarm, chat_id),
-                    parse_mode="HTML",
-                )
-                return
         
         bot.send_message(
             chat_id,
-            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой « Старт».",
+            f"🌍 <b>Зона изменена на: {zone_name}</b>\nЗапустите мониторинг кнопкой «🚀 Старт».",
             reply_markup=get_main_keyboard(saved_alarm, chat_id),
             parse_mode="HTML",
         )
@@ -1060,7 +958,7 @@ def admin_panel(message):
     
     bot.send_message(
         message.chat.id,
-        f"️ <b>Админ-панель</b>\n\nВыберите действие:",
+        f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
         reply_markup=markup,
         parse_mode="HTML"
     )
@@ -1088,7 +986,7 @@ def handle_admin_avg(call):
         telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("️ Назад", callback_data="admin_back"),
+        telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
     )
     
     bot.edit_message_text(
@@ -1202,7 +1100,7 @@ def show_users_inline(message):
         conn.close()
 
     if not rows:
-        bot.send_message(chat_id, " В базе пока нет ни одного пользователя.")
+        bot.send_message(chat_id, "📭 В базе пока нет ни одного пользователя.")
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
@@ -1255,7 +1153,7 @@ def show_users_inline(message):
                 f"🗑️ Удалить {first_name}", callback_data=f"delete_{user_chat_id}"
             ))
     
-    markup.add(telebot.types.InlineKeyboardButton("️ Назад в админ-панель", callback_data="admin_back"))
+    markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад в админ-панель", callback_data="admin_back"))
 
     bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
@@ -1290,7 +1188,7 @@ def handle_avg_period(call):
             telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"),
         )
         markup.add(
-            telebot.types.InlineKeyboardButton("️ Назад", callback_data="admin_back"),
+            telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
         )
         
         bot.edit_message_text(
@@ -1410,7 +1308,7 @@ def process_custom_step(message):
         if not (1 <= minutes <= 1440):
             raise ValueError()
     except:
-        bot.send_message(chat_id, " Ошибка: введите целое число от 1 до 1440.")
+        bot.send_message(chat_id, "❌ Ошибка: введите целое число от 1 до 1440.")
         return
 
     with sessions_lock:
@@ -1420,7 +1318,7 @@ def process_custom_step(message):
     if not start_monitoring(chat_id, minutes, zone_key):
         with sessions_lock:
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
-        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     
     zone_name = get_zone_name(zone_key)
@@ -1443,7 +1341,7 @@ def stop(message):
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     if stop_monitoring(chat_id):
-        bot.reply_to(message, " <b>Мониторинг остановлен.</b>", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
+        bot.reply_to(message, "🛑 <b>Мониторинг остановлен.</b>", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
     else:
         bot.reply_to(message, "⚠️ Мониторинг не активен.", reply_markup=get_main_keyboard(alarm_on, chat_id))
 
@@ -1460,36 +1358,6 @@ def enable_alarm(message):
         sessions[chat_id]["last_called_state"] = False
 
     bot.reply_to(message, "🔔 <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
-    
-    try:
-        with sessions_lock:
-            session = sessions.get(chat_id, {})
-            current_filter = session.get("car_filter")
-            last_cars = session.get("last_cars", [])
-        
-        if current_filter and last_cars:
-            search_query = current_filter.replace(" ", "").lower()
-            for car in last_cars:
-                car_number = str(
-                    car.get("regnum") or car.get("number") or 
-                    car.get("nzp") or car.get("reg_number") or ""
-                ).replace(" ", "").lower()
-                
-                if search_query in car_number or search_query == car_number:
-                    raw_status = car.get("status") or car.get("state") or car.get("statusName")
-                    is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
-                    
-                    if is_called:
-                        bot.send_message(
-                            chat_id,
-                            f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(current_filter))} УЖЕ вызвана в ПП!</b> Сирена активирована!",
-                            parse_mode="HTML"
-                        )
-                        trigger_alarm(chat_id, current_filter)
-                    break
-    except Exception as e:
-        sys.stdout.write(f"⚠️ Ошибка мгновенной проверки сирены: {e}\n")
-        sys.stdout.flush()
 
 
 @bot.message_handler(commands=["alarm_off"])
@@ -1501,8 +1369,6 @@ def disable_alarm(message):
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["alarm_enabled"] = False
-        
-        stop_alarm(chat_id)
 
     bot.reply_to(message, "🔕 <b>Громкая сирена выключена.</b>", reply_markup=get_main_keyboard(False, chat_id), parse_mode="HTML")
 
@@ -1542,8 +1408,6 @@ def remove_car_filter(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
     
-    stop_alarm(chat_id)
-    
     with sessions_lock:
         if chat_id in sessions:
             sessions[chat_id]["car_filter"] = None
@@ -1572,7 +1436,7 @@ def handle_car_search(message):
         session = sessions.get(chat_id)
         if not session or not session.get("last_cars"):
             alarm_on = session.get("alarm_enabled", False) if session else False
-            bot.reply_to(message, "⚠️ Сначала запустите мониторинг кнопкой «🚀 Старт».", reply_markup=get_main_keyboard(alarm_on, chat_id))
+            bot.reply_to(message, "⚠️ Сначала запустите мониторинг кнопкой « Старт».", reply_markup=get_main_keyboard(alarm_on, chat_id))
             return
         cars = session["last_cars"]
 
@@ -1595,7 +1459,7 @@ def handle_car_search(message):
             f"🔍 <b>Результат поиска:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
             f"🚗 <b>Позиция:</b> <b>{position}</b>-я\n"
-            f" <b>Статус:</b> {html.escape(str(status))}\n"
+            f"📋 <b>Статус:</b> {html.escape(str(status))}\n"
             f"━━━━━━━━━━━━━━━"
         )
     else:
@@ -1607,7 +1471,7 @@ def handle_car_search(message):
 # ==================== ЗАПУСК БОТА ====================
 
 def run_telegram_bot():
-    sys.stdout.write(" [BOT] Функция run_telegram_bot ЗАПУЩЕНА\n")
+    sys.stdout.write("🤖 [BOT] Функция run_telegram_bot ЗАПУЩЕНА\n")
     sys.stdout.flush()
     
     time.sleep(3)
@@ -1631,7 +1495,7 @@ def run_telegram_bot():
             sys.stdout.flush()
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
-            sys.stdout.write(f" [BOT] Ошибка polling: {e}\n")
+            sys.stdout.write(f"❌ [BOT] Ошибка polling: {e}\n")
             sys.stdout.flush()
             sys.stdout.write("🔄 [BOT] Перезапуск через 5 сек...\n")
             sys.stdout.flush()
