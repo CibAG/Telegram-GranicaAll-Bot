@@ -495,17 +495,17 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
     filter_block = f"{car_line}━━━━━━━━━━━━━━━\n" if car_line else ""
     
     if urgent_mode:
-        interval_text = "  АВАРИЙНЫЙ РЕЖИМ (30 сек)"
+        interval_text = " 🚨 Машина вызвана в ПП — опрос каждые 30 сек"
     else:
         interval_text = f" Периодом {interval} мин." if interval else ""
     
     if history_count > 0:
-        avg_line = f" На основе {history_count} записей за {avg_period} ч\n"
+        avg_line = f"📊 На основе {history_count} записей за {avg_period} ч\n"
     else:
         avg_line = "📊 По текущим данным\n"
     
     return (
-        f" <b>Мониторинг границы {zone_name}</b>\n"
+        f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
         f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
@@ -515,7 +515,7 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
-        f" Статус изменён: {html.escape(str(d['changed']))}\n"
+        f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
         "━━━━━━━━━━━━━━━\n"
         f"💡 <i>Мониторинг работает в фоновом режиме.{interval_text}</i>"
     )
@@ -561,7 +561,7 @@ def stats_collector_loop():
             time.sleep(1800)
                 
         except Exception as e:
-            sys.stdout.write(f" [STATS] КРИТИЧЕСКАЯ ОШИБКА в сборщике: {e}\n")
+            sys.stdout.write(f"❌ [STATS] КРИТИЧЕСКАЯ ОШИБКА в сборщике: {e}\n")
             sys.stdout.write(f"🔄 [STATS] Перезапуск через 60 секунд...\n")
             sys.stdout.flush()
             time.sleep(60)
@@ -578,14 +578,14 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
     consecutive_errors = 0
     max_consecutive_errors = 3
     
-    urgent_mode = False  # Флаг аварийного режима
+    urgent_mode = False  # Флаг ускоренного режима
     
     while not stop_event.is_set():
         try:
             iteration += 1
             
             if iteration % 10 == 0:
-                mode_text = "🔥 АВАРИЙНЫЙ (30 сек)" if urgent_mode else f"обычный ({interval} мин)"
+                mode_text = "🚨 Машина в ПП (30 сек)" if urgent_mode else f"обычный ({interval} мин)"
                 sys.stdout.write(f"💓 [BOT] Поток {chat_id} жив (итерация {iteration}, режим: {mode_text})\n")
                 sys.stdout.flush()
 
@@ -602,7 +602,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 
                 if consecutive_errors >= max_consecutive_errors:
                     try:
-                        bot.send_message(chat_id, f"️ Мониторинг остановлен из-за ошибок API.\nЗапустите заново: /start")
+                        bot.send_message(chat_id, f"⚠️ Мониторинг остановлен из-за ошибок API.\nЗапустите заново: /start")
                     except:
                         pass
                     break
@@ -651,7 +651,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                     bot.send_message(
                         chat_id,
                         f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(current_filter)} вызвана в ПП!</b>\n"
-                        f" <b>Мониторинг ускорен до 30 секунд!</b>",
+                        f"⚡ <b>Опрос ускорен до 30 секунд, пока машина в ПП!</b>",
                         parse_mode="HTML"
                     )
                 except Exception as e:
@@ -827,7 +827,7 @@ def start(message):
 def select_zone(message):
     chat_id = message.chat.id
     if is_user_blocked(chat_id):
-        bot.reply_to(message, " Доступ к боту ограничен.")
+        bot.reply_to(message, "❌ Доступ к боту ограничен.")
         return
     
     update_user_activity(chat_id)
@@ -839,7 +839,7 @@ def select_zone(message):
     zone_name = get_zone_name(current_zone)
     bot.send_message(
         chat_id,
-        f" <b>Текущая зона: {zone_name}</b>\nВыберите другую зону ожидания:",
+        f"🌍 <b>Текущая зона: {zone_name}</b>\nВыберите другую зону ожидания:",
         reply_markup=get_zone_keyboard(),
         parse_mode="HTML"
     )
@@ -923,7 +923,7 @@ def admin_panel(message):
     
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton(" Период усреднения", callback_data="admin_avg"),
+        telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
     )
     markup.add(
         telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
@@ -1000,7 +1000,7 @@ def handle_admin_backup(call):
             bot.send_document(
                 chat_id,
                 db_file,
-                caption=f" <b>Бэкап базы данных</b>\n\n"
+                caption=f"📊 <b>Бэкап базы данных</b>\n\n"
                         f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
                         f"💾 Файл: bot_users.db\n\n"
                         f"<i>Для восстановления:</i>\n"
@@ -1024,7 +1024,7 @@ def handle_admin_backup(call):
         
     except FileNotFoundError:
         bot.edit_message_text(
-            " <b>Ошибка:</b> Файл базы данных не найден!\n\n"
+            "❌ <b>Ошибка:</b> Файл базы данных не найден!\n\n"
             "Убедитесь, что бот уже работал и создал базу.",
             chat_id=chat_id,
             message_id=call.message.message_id,
@@ -1076,7 +1076,7 @@ def show_users_inline(message):
         conn.close()
 
     if not rows:
-        bot.send_message(chat_id, " В базе пока нет ни одного пользователя.")
+        bot.send_message(chat_id, "📭 В базе пока нет ни одного пользователя.")
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
@@ -1105,7 +1105,7 @@ def show_users_inline(message):
                     days = int(diff.total_seconds() / 86400)
                     activity_status = f"🔴 {days} дн назад"
             except:
-                activity_status = " Неизвестно"
+                activity_status = "⚪ Неизвестно"
         else:
             activity_status = "⚪ Неизвестно"
         
@@ -1129,7 +1129,7 @@ def show_users_inline(message):
                 f"🗑️ Удалить {first_name}", callback_data=f"delete_{user_chat_id}"
             ))
     
-    markup.add(telebot.types.InlineKeyboardButton("️ Назад в админ-панель", callback_data="admin_back"))
+    markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад в админ-панель", callback_data="admin_back"))
 
     bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
@@ -1164,7 +1164,7 @@ def handle_avg_period(call):
             telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"),
         )
         markup.add(
-            telebot.types.InlineKeyboardButton("️ Назад", callback_data="admin_back"),
+            telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
         )
         
         bot.edit_message_text(
@@ -1240,7 +1240,7 @@ def set_preset_interval(call):
     if not start_monitoring(chat_id, interval, zone_key):
         with sessions_lock:
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
-        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     
     with sessions_lock:
@@ -1294,7 +1294,7 @@ def process_custom_step(message):
     if not start_monitoring(chat_id, minutes, zone_key):
         with sessions_lock:
             alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
-        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     
     zone_name = get_zone_name(zone_key)
@@ -1323,7 +1323,7 @@ def stop(message):
 
 
 @bot.message_handler(commands=["alarm_on"])
-@bot.message_handler(func=lambda message: message.text in [" Включить сирену", "🔔 Включить сирену"])
+@bot.message_handler(func=lambda message: message.text in ["🔔 Включить сирену", "🔔 Включить сирену"])
 def enable_alarm(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
@@ -1453,7 +1453,7 @@ def run_telegram_bot():
     time.sleep(3)
     
     try:
-        sys.stdout.write(" [BOT] Очистка вебхуков...\n")
+        sys.stdout.write("🤖 [BOT] Очистка вебхуков...\n")
         sys.stdout.flush()
         response = requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
