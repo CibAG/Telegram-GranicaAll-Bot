@@ -180,7 +180,7 @@ def get_average_stats(zone_key: str, hours: int = 24):
             else:
                 return 0, 0, 0
     except Exception as e:
-        sys.stdout.write(f"️ Ошибка получения средней статистики: {e}\n")
+        sys.stdout.write(f"⚠️ Ошибка получения средней статистики: {e}\n")
         sys.stdout.flush()
         return 0, 0, 0
 
@@ -303,7 +303,7 @@ def get_main_keyboard(alarm_status=False, chat_id=None):
         telebot.types.KeyboardButton("❌ Снять фильтр")
     )
     
-    alarm_text = " Выключить сирену" if alarm_status else "🔔 Включить сирену"
+    alarm_text = "🔕 Выключить сирену" if alarm_status else "🔔 Включить сирену"
     
     if chat_id == ADMIN_CHAT_ID:
         markup.row(
@@ -571,13 +571,13 @@ def alarm_loop(chat_id: int, reg_num: str):
                 try:
                     bot.send_message(
                         chat_id,
-                        f"🚨 <b>ВНИМАНИЕ!!! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨\n"
+                        f" <b>ВНИМАНИЕ!!! Машина {html.escape(str(reg_num))} вызвана в ПП!</b> 🚨\n"
                         f"⏰ Повторное уведомление #{iteration}",
                         parse_mode="HTML"
                     )
                     time.sleep(1)
                 except Exception as e:
-                    sys.stdout.write(f"️ [ALARM] Ошибка отправки сообщения: {e}\n")
+                    sys.stdout.write(f"⚠️ [ALARM] Ошибка отправки сообщения: {e}\n")
                     sys.stdout.flush()
                     break
             
@@ -683,14 +683,14 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
         f"📊 <b>Мониторинг границы {zone_name}</b>\n"
         "━━━━━━━━━━━━━━━\n"
         f"{filter_block}"
-        f"🚗 Машин в очереди: {html.escape(str(d['total']))}\n"
-        f"🕒 Первая стоит: {html.escape(str(d['wait']))} мин.\n"
+        f" Машин в очереди: {html.escape(str(d['total']))}\n"
+        f" Первая стоит: {html.escape(str(d['wait']))} мин.\n"
         f"⏳ Оценка для вас: {format_estimate_html(d['estimate'])}\n"
         f"{avg_line}"
         f"📉 За час: {html.escape(str(d['stats_hour']))} маш.\n"
         f"📅 За сутки: {html.escape(str(d['stats_day']))} маш.\n"
         f"📅 Дата 1-го авто: {html.escape(str(d['reg_date']))}\n"
-        f" Статус изменён: {html.escape(str(d['changed']))}\n"
+        f"🔄 Статус изменён: {html.escape(str(d['changed']))}\n"
         "━━━━━━━━━━━━━━━\n"
         f"💡 <i>Мониторинг работает в фоновом режиме.{interval_text}</i>"
     )
@@ -736,7 +736,7 @@ def stats_collector_loop():
             time.sleep(1800)
                 
         except Exception as e:
-            sys.stdout.write(f"❌ [STATS] КРИТИЧЕСКАЯ ОШИБКА в сборщике: {e}\n")
+            sys.stdout.write(f" [STATS] КРИТИЧЕСКАЯ ОШИБКА в сборщике: {e}\n")
             sys.stdout.write(f"🔄 [STATS] Перезапуск через 60 секунд...\n")
             sys.stdout.flush()
             time.sleep(60)
@@ -758,13 +758,13 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 sys.stdout.flush()
 
             if is_user_blocked(chat_id):
-                sys.stdout.write(f"️ [BOT] Пользователь {chat_id} заблокирован, остановка потока.\n")
+                sys.stdout.write(f"⚠️ [BOT] Пользователь {chat_id} заблокирован, остановка потока.\n")
                 sys.stdout.flush()
                 break
             
             data = fetch_data(zone_key)
             if "error" in data:
-                bot.send_message(chat_id, f" Ошибка мониторинга: {data['error']}")
+                bot.send_message(chat_id, f"❌ Ошибка мониторинга: {data['error']}")
             else:
                 with sessions_lock:
                     session = sessions.get(chat_id, {})
@@ -801,8 +801,8 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 time.sleep(1)
                 
         except Exception as e:
-            sys.stdout.write(f"❌ [BOT] КРИТИЧЕСКАЯ ОШИБКА в потоке {chat_id}: {e}\n")
-            sys.stdout.write(f"🔄 [BOT] Перезапуск потока {chat_id} через 60 секунд...\n")
+            sys.stdout.write(f" [BOT] КРИТИЧЕСКАЯ ОШИБКА в потоке {chat_id}: {e}\n")
+            sys.stdout.write(f" [BOT] Перезапуск потока {chat_id} через 60 секунд...\n")
             sys.stdout.flush()
             time.sleep(60)
     
@@ -901,8 +901,8 @@ def start(message):
     zone_name = get_zone_name(current_zone)
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton(" 3 мин", callback_data="int_3"),
-        telebot.types.InlineKeyboardButton(" 10 мин", callback_data="int_10"),
+        telebot.types.InlineKeyboardButton("⏱ 3 мин", callback_data="int_3"),
+        telebot.types.InlineKeyboardButton("⏱ 10 мин", callback_data="int_10"),
         telebot.types.InlineKeyboardButton("✍️ Свой интервал", callback_data="int_custom"),
     )
     bot.send_message(
@@ -918,7 +918,7 @@ def start(message):
 def select_zone(message):
     chat_id = message.chat.id
     if is_user_blocked(chat_id):
-        bot.reply_to(message, "❌ Доступ к боту ограничен.")
+        bot.reply_to(message, " Доступ к боту ограничен.")
         return
     
     update_user_activity(chat_id)
@@ -930,7 +930,7 @@ def select_zone(message):
     zone_name = get_zone_name(current_zone)
     bot.send_message(
         chat_id,
-        f" <b>Текущая зона: {zone_name}</b>\nВыберите другую зону ожидания:",
+        f"🌍 <b>Текущая зона: {zone_name}</b>\nВыберите другую зону ожидания:",
         reply_markup=get_zone_keyboard(),
         parse_mode="HTML"
     )
@@ -947,7 +947,7 @@ def handle_zone_selection(call):
     try:
         zone_key = call.data.replace("zone_", "")
         if zone_key not in ZONES:
-            bot.answer_callback_query(call.id, " Неизвестная зона")
+            bot.answer_callback_query(call.id, "❌ Неизвестная зона")
             return
         
         was_running = is_monitoring(chat_id)
@@ -994,8 +994,8 @@ def handle_zone_selection(call):
             else:
                 bot.send_message(
                     chat_id,
-                    f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
-                    f"⚠️ Не удалось перезапустить мониторинг.",
+                    f" <b>Зона изменена на: {zone_name}</b>\n"
+                    f"️ Не удалось перезапустить мониторинг.",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
                 )
@@ -1023,10 +1023,10 @@ def admin_panel(message):
     
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
+        telebot.types.InlineKeyboardButton(" Период усреднения", callback_data="admin_avg"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton(" Пользователи", callback_data="admin_users"),
+        telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
     )
     markup.add(
         telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
@@ -1066,7 +1066,7 @@ def handle_admin_avg(call):
     )
     
     bot.edit_message_text(
-        f" <b>Период усреднения для расчёта оценки</b>\n\n"
+        f"📊 <b>Период усреднения для расчёта оценки</b>\n\n"
         f"Текущий период: <b>{current_avg} часов</b>\n\n"
         f"Чем больше период — тем стабильнее оценка.\n"
         f"Чем меньше период — тем точнее отражает текущую ситуацию.\n\n"
@@ -1101,7 +1101,7 @@ def handle_admin_backup(call):
                 chat_id,
                 db_file,
                 caption=f"📊 <b>Бэкап базы данных</b>\n\n"
-                        f" Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+                        f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
                         f"💾 Файл: bot_users.db\n\n"
                         f"<i>Для восстановления:</i>\n"
                         f"1. Остановите бота\n"
@@ -1147,17 +1147,17 @@ def handle_admin_back(call):
     
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
+        telebot.types.InlineKeyboardButton(" Период усреднения", callback_data="admin_avg"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton(" Пользователи", callback_data="admin_users"),
+        telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
     )
     markup.add(
         telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
     )
     
     bot.edit_message_text(
-        f"️ <b>Админ-панель</b>\n\nВыберите действие:",
+        f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
         chat_id=chat_id,
         message_id=call.message.message_id,
         reply_markup=markup,
@@ -1176,11 +1176,11 @@ def show_users_inline(message):
         conn.close()
 
     if not rows:
-        bot.send_message(chat_id, "📭 В базе пока нет ни одного пользователя.")
+        bot.send_message(chat_id, " В базе пока нет ни одного пользователя.")
         return
 
     markup = telebot.types.InlineKeyboardMarkup()
-    text = f" <b>Пользователи ({len(rows)}):</b>\n\n"
+    text = f"👥 <b>Пользователи ({len(rows)}):</b>\n\n"
     
     now = datetime.now()
     
@@ -1207,9 +1207,9 @@ def show_users_inline(message):
             except:
                 activity_status = "⚪ Неизвестно"
         else:
-            activity_status = "⚪ Неизвестно"
+            activity_status = " Неизвестно"
         
-        status_icon = " Заблок." if is_blocked == 1 else "✅ Активен"
+        status_icon = "🔴 Заблок." if is_blocked == 1 else "✅ Активен"
         
         text += f"• <b>{html.escape(name)}</b> ({uname})\n"
         text += f"  ID: <code>{user_chat_id}</code>\n"
@@ -1349,7 +1349,7 @@ def set_preset_interval(call):
     zone_name = get_zone_name(zone_key)
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
+        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n Зона: {zone_name}",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
@@ -1368,7 +1368,7 @@ def set_custom(call):
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     if is_monitoring(chat_id):
-        bot.send_message(chat_id, "⚠️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
+        bot.send_message(chat_id, "️ Мониторинг уже запущен!", reply_markup=get_main_keyboard(alarm_on, chat_id))
         return
     msg = bot.send_message(chat_id, "✍️ Введите количество <b>минут</b> для интервала (число):", parse_mode="HTML")
     bot.register_next_step_handler(msg, process_custom_step)
@@ -1403,7 +1403,7 @@ def process_custom_step(message):
 
     bot.send_message(
         chat_id,
-        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...\n Зона: {zone_name}",
+        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
         reply_markup=get_main_keyboard(alarm_on, chat_id),
     )
 
@@ -1423,7 +1423,7 @@ def stop(message):
 
 
 @bot.message_handler(commands=["alarm_on"])
-@bot.message_handler(func=lambda message: "включить" in message.text.lower() and "сирен" in message.text.lower())
+@bot.message_handler(func=lambda message: message.text in ["🔔 Включить сирену", "🔔 Включить сирену"])
 def enable_alarm(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
@@ -1431,12 +1431,44 @@ def enable_alarm(message):
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["alarm_enabled"] = True
+        sessions[chat_id]["last_called_state"] = False
 
-    bot.reply_to(message, " <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
+    bot.reply_to(message, "🔔 <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
+    
+    # МГНОВЕННАЯ ПРОВЕРКА: если машина уже вызвана — сразу запускаем сирену
+    try:
+        with sessions_lock:
+            session = sessions.get(chat_id, {})
+            current_filter = session.get("car_filter")
+            last_cars = session.get("last_cars", [])
+        
+        if current_filter and last_cars:
+            search_query = current_filter.replace(" ", "").lower()
+            for car in last_cars:
+                car_number = str(
+                    car.get("regnum") or car.get("number") or 
+                    car.get("nzp") or car.get("reg_number") or ""
+                ).replace(" ", "").lower()
+                
+                if search_query in car_number or search_query == car_number:
+                    raw_status = car.get("status") or car.get("state") or car.get("statusName")
+                    is_called = (raw_status == 3 or str(raw_status).lower() in ["вызван в пп", "3"])
+                    
+                    if is_called:
+                        bot.send_message(
+                            chat_id,
+                            f"🚨 <b>ВНИМАНИЕ! Машина {html.escape(str(current_filter))} УЖЕ вызвана в ПП!</b> Сирена активирована!",
+                            parse_mode="HTML"
+                        )
+                        trigger_alarm(chat_id, current_filter)
+                    break
+    except Exception as e:
+        sys.stdout.write(f"⚠️ Ошибка мгновенной проверки сирены: {e}\n")
+        sys.stdout.flush()
 
 
 @bot.message_handler(commands=["alarm_off"])
-@bot.message_handler(func=lambda message: "выключить" in message.text.lower() and "сирен" in message.text.lower())
+@bot.message_handler(func=lambda message: message.text in [" Выключить сирену", " Выключить сирену"])
 def disable_alarm(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
@@ -1537,7 +1569,7 @@ def handle_car_search(message):
         response_text = (
             f"🔍 <b>Результат поиска:</b> {html.escape(str(reg_num))}\n"
             f"━━━━━━━━━━━━━━━\n"
-            f" <b>Позиция:</b> <b>{position}</b>-я\n"
+            f"🚗 <b>Позиция:</b> <b>{position}</b>-я\n"
             f"📋 <b>Статус:</b> {html.escape(str(status))}\n"
             f"━━━━━━━━━━━━━━━"
         )
@@ -1556,7 +1588,7 @@ def run_telegram_bot():
     time.sleep(3)
     
     try:
-        sys.stdout.write("🤖 [BOT] Очистка вебхуков...\n")
+        sys.stdout.write(" [BOT] Очистка вебхуков...\n")
         sys.stdout.flush()
         response = requests.get(
             f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
@@ -1565,7 +1597,7 @@ def run_telegram_bot():
         sys.stdout.write(f"✅ [BOT] Вебхуки очищены. Статус: {response.status_code}\n")
         sys.stdout.flush()
     except Exception as e:
-        sys.stdout.write(f"️ [BOT] Ошибка при очистке вебхуков: {e}\n")
+        sys.stdout.write(f"⚠️ [BOT] Ошибка при очистке вебхуков: {e}\n")
         sys.stdout.flush()
 
     while True:
@@ -1581,7 +1613,7 @@ def run_telegram_bot():
             time.sleep(5)
 
 
-sys.stdout.write("🚀 [BOT] Создание потока для Telegram бота...\n")
+sys.stdout.write(" [BOT] Создание потока для Telegram бота...\n")
 sys.stdout.flush()
 bot_thread = threading.Thread(target=run_telegram_bot, daemon=False)
 bot_thread.start()
