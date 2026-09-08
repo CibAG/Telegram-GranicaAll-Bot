@@ -473,8 +473,11 @@ def get_status_text(car):
 
 
 def get_car_status_line(cars, target_query, stats_hour):
-    if not target_query or not cars:
+    if not target_query:
         return ""
+    
+    if not cars:
+        return f"🎯 <b>{html.escape(target_query)}</b>: не найдена в этой зоне\n"
     
     search_query = target_query.replace(" ", "").lower()
     for idx, car in enumerate(cars, start=1):
@@ -496,7 +499,7 @@ def get_car_status_line(cars, target_query, stats_hour):
             
             return f"🎯 <b>{html.escape(str(reg_num))}</b>: <b>{idx}-я</b> | <i>{html.escape(str(status))}</i>{eta_str}\n"
     
-    return f"🎯 <b>{html.escape(target_query)}</b>: не найдена\n"
+    return f"🎯 <b>{html.escape(target_query)}</b>: не найдена в этой зоне\n"
 
 
 def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = None, avg_period: int = 24, history_count: int = 0, urgent_mode: bool = False):
