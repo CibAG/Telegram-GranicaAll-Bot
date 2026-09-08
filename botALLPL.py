@@ -7,6 +7,16 @@ import threading
 import time
 import sys
 from flask import Flask
+from io import BytesIO
+
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    CHARTS_AVAILABLE = True
+except Exception:
+    CHARTS_AVAILABLE = False
 
 import requests
 import telebot
@@ -522,6 +532,64 @@ def build_report(d, zone_key: str = "brest", car_filter=None, interval: int = No
 
 
 # ==========================================
+# ПОСТРОЕНИЕ ГРАФИКА ДИНАМИКИ ОЧЕРЕДИ
+# ==========================================
+def build_queue_chart(hours: int):
+    """Строит график динамики очереди по данным из базы"""
+    with db_lock:
+        conn = sqlite3.connect("bot_users.db")
+        cursor = conn.cursor()
+        cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            SELECT timestamp, zone_key, total_cars, stats_hour
+            FROM border_stats
+            WHERE timestamp > ?
+            ORDER BY timestamp
+        """, (cutoff,))
+        rows = cursor.fetchall()
+        conn.close()
+
+    if not rows:
+        return None
+
+    data = {}
+    for ts, zone, total, per_hour in rows:
+        t = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") + timedelta(hours=3)  # Минское время
+        data.setdefault(zone, {"t": [], "total": [], "per_hour": []})
+        data[zone]["t"].append(t)
+        data[zone]["total"].append(total)
+        data[zone]["per_hour"].append(per_hour)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    colors = {"brest": "#1f77b4", "berestovitsa": "#ff7f0e", "bruzgi": "#2ca02c"}
+
+    for zone, series in data.items():
+        name = ZONES.get(zone, {}).get("name", zone)
+        color = colors.get(zone, "#777777")
+        ax1.plot(series["t"], series["total"], label=name, color=color, linewidth=2)
+        ax2.plot(series["t"], series["per_hour"], label=name, color=color, linewidth=1.5)
+
+    ax1.set_title("Динамика очереди (машин в очереди)", fontsize=13, fontweight="bold")
+    ax1.set_ylabel("Машин в очереди")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper left")
+
+    ax2.set_title("Пропускная способность (машин за час)", fontsize=13, fontweight="bold")
+    ax2.set_ylabel("Машин/час")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper left")
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m %H:%M"))
+    fig.autofmt_xdate()
+
+    fig.tight_layout()
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=110)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+# ==========================================
 # ФОНОВЫЙ СБОРЩИК СТАТИСТИКИ ПО ВСЕМ ЗОНАМ
 # ==========================================
 def stats_collector_loop():
@@ -931,6 +999,9 @@ def admin_panel(message):
     markup.add(
         telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
     )
+    markup.add(
+        telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
+    )
     
     bot.send_message(
         message.chat.id,
@@ -1055,6 +1126,9 @@ def handle_admin_back(call):
     markup.add(
         telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
     )
+    markup.add(
+        telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
+    )
     
     bot.edit_message_text(
         f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
@@ -1063,6 +1137,69 @@ def handle_admin_back(call):
         reply_markup=markup,
         parse_mode="HTML"
     )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_chart")
+def handle_admin_chart(call):
+    chat_id = call.message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        return
+    
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(
+        telebot.types.InlineKeyboardButton("24 часа", callback_data="chart_24"),
+        telebot.types.InlineKeyboardButton("48 часов", callback_data="chart_48"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("72 часа", callback_data="chart_72"),
+        telebot.types.InlineKeyboardButton("10 дней", callback_data="chart_240"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
+    )
+    
+    bot.edit_message_text(
+        "📈 <b>График очереди</b>\n\nВыберите период для построения графика:",
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("chart_"))
+def handle_chart_period(call):
+    chat_id = call.message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        return
+    
+    if not CHARTS_AVAILABLE:
+        bot.answer_callback_query(call.id, "❌ Графики недоступны")
+        bot.send_message(chat_id, "❌ Для графиков добавьте matplotlib в requirements.txt и задеплойте.")
+        return
+    
+    hours = int(call.data.replace("chart_", ""))
+    bot.answer_callback_query(call.id, "📊 Строю график...")
+    
+    try:
+        buf = build_queue_chart(hours)
+    except Exception as e:
+        buf = None
+        sys.stdout.write(f"❌ [CHART] Ошибка построения графика: {e}\n")
+        sys.stdout.flush()
+    
+    if buf is None:
+        bot.send_message(chat_id, "❌ Недостаточно данных для графика (сборщику статистики нужно время).")
+        return
+    
+    period_text = f"{hours} ч" if hours < 24 else f"{hours // 24} сут."
+    caption = (
+        f"📈 <b>Динамика очереди за {period_text}</b>\n"
+        f"Сверху: машин в очереди\n"
+        f"Снизу: пропускная способность (маш/час)\n"
+        f"⏰ Время: минское (UTC+3)"
+    )
+    bot.send_photo(chat_id, buf, caption=caption, parse_mode="HTML")
 
 
 def show_users_inline(message):
