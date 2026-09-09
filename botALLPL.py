@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import sys
+import gc
 from flask import Flask
 from io import BytesIO
 
@@ -563,6 +564,15 @@ def build_queue_chart(hours: int):
         data[zone]["total"].append(total)
         data[zone]["per_hour"].append(per_hour)
 
+    # Прореживание: не более 400 точек на зону (защита от перерасхода памяти)
+    for zone in data:
+        n = len(data[zone]["t"])
+        if n > 400:
+            step = n // 400 + 1
+            data[zone]["t"] = data[zone]["t"][::step]
+            data[zone]["total"] = data[zone]["total"][::step]
+            data[zone]["per_hour"] = data[zone]["per_hour"][::step]
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     colors = {"brest": "#1f77b4", "berestovitsa": "#ff7f0e", "bruzgi": "#2ca02c"}
 
@@ -586,8 +596,9 @@ def build_queue_chart(hours: int):
 
     fig.tight_layout()
     buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=110)
+    fig.savefig(buf, format="png", dpi=100)
     plt.close(fig)
+    gc.collect()
     buf.seek(0)
     return buf
 
@@ -1184,10 +1195,10 @@ def handle_chart_period(call):
     hours = int(call.data.replace("chart_", ""))
     bot.answer_callback_query(call.id, "📊 Строю график...")
     
+    buf = None
     try:
         buf = build_queue_chart(hours)
     except Exception as e:
-        buf = None
         sys.stdout.write(f"❌ [CHART] Ошибка построения графика: {e}\n")
         sys.stdout.flush()
     
@@ -1202,7 +1213,17 @@ def handle_chart_period(call):
         f"Снизу: пропускная способность (маш/час)\n"
         f"⏰ Время: минское (UTC+3)"
     )
-    bot.send_photo(chat_id, buf, caption=caption, parse_mode="HTML")
+    try:
+        bot.send_photo(chat_id, buf, caption=caption, parse_mode="HTML")
+    except Exception as e:
+        sys.stdout.write(f"⚠️ [CHART] Ошибка отправки графика: {e}\n")
+        sys.stdout.flush()
+    finally:
+        try:
+            buf.close()
+        except Exception:
+            pass
+        gc.collect()
 
 
 def show_users_inline(message):
@@ -1618,10 +1639,31 @@ def run_telegram_bot():
             time.sleep(5)
 
 
+def polling_watchdog():
+    """Следит за потоком polling и перезапускает его, если он умер"""
+    global bot_thread
+    while True:
+        time.sleep(30)
+        try:
+            if not bot_thread.is_alive():
+                sys.stdout.write("🚨 [WATCHDOG] Поток polling не отвечает — перезапускаю...\n")
+                sys.stdout.flush()
+                bot_thread = threading.Thread(target=run_telegram_bot, daemon=False)
+                bot_thread.start()
+        except Exception as e:
+            sys.stdout.write(f"⚠️ [WATCHDOG] Ошибка: {e}\n")
+            sys.stdout.flush()
+
+
 sys.stdout.write("🚀 [BOT] Создание потока для Telegram бота...\n")
 sys.stdout.flush()
 bot_thread = threading.Thread(target=run_telegram_bot, daemon=False)
 bot_thread.start()
+
+sys.stdout.write("👁 [WATCHDOG] Создание сторожевого потока...\n")
+sys.stdout.flush()
+watchdog_thread = threading.Thread(target=polling_watchdog, daemon=True)
+watchdog_thread.start()
 
 sys.stdout.write("📊 [STATS] Создание потока для сборщика статистики...\n")
 sys.stdout.flush()
