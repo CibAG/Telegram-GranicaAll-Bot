@@ -7,6 +7,7 @@ import threading
 import time
 import sys
 import gc
+import re
 from flask import Flask
 from io import BytesIO
 
@@ -18,6 +19,12 @@ try:
     CHARTS_AVAILABLE = True
 except Exception:
     CHARTS_AVAILABLE = False
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except Exception:
+    BS4_AVAILABLE = False
 
 import requests
 import telebot
@@ -78,6 +85,23 @@ ZONES = {
         "checkpoint_id": "3b797d4d-706a-440f-a1a4-826c191e1e36",
         "base_url": "https://belarusborder.by/info",
     },
+}
+
+# --- Польские пункты пропуска (соответствие белорусским) ---
+PL_CHECKPOINTS = ["kuznica", "bobrowniki", "polowce", "koroszczyn", "terespol", "slawatycze"]
+PL_NAMES_RU = {
+    "kuznica": "Кузьница",
+    "bobrowniki": "Бобровники",
+    "polowce": "Половце",
+    "koroszczyn": "Корощин",
+    "terespol": "Тересполь",
+    "slawatycze": "Славатыче",
+}
+PL_TO_BY = {
+    "terespol": "Брест",
+    "bobrowniki": "Берестовица",
+    "kuznica": "Брузги",
+    "koroszczyn": "Козловичи",
 }
 
 sessions_lock = threading.Lock()
@@ -604,6 +628,85 @@ def build_queue_chart(hours: int):
 
 
 # ==========================================
+# ДАННЫЕ ПОЛЬСКОЙ СТОРОНЫ (granica.gov.pl)
+# ==========================================
+def fetch_poland_waiting_times():
+    """Получает время ожидания на польских пунктах пропуска (выезд из РП)"""
+    if not BS4_AVAILABLE:
+        return {"error": "beautifulsoup4 не установлен на сервере"}
+    
+    try:
+        session_req = requests.Session()
+        session_req.trust_env = False
+        no_proxy = {"http": None, "https": None}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+        }
+        
+        resp = session_req.get(
+            "https://granica.gov.pl/index_wait.php?v=ru",
+            timeout=20,
+            proxies=no_proxy,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        
+        soup = BeautifulSoup(resp.text, "html.parser")
+        
+        # Ищем таблицу с пунктами пропуска (Беларусь)
+        target_table = None
+        for table in soup.find_all("table"):
+            text = table.get_text(" ", strip=True).lower()
+            if ("тересполь" in text or "terespol" in text) and ("куз" in text or "kuźnica" in text or "kuznica" in text):
+                target_table = table
+                break
+        
+        if target_table is None:
+            return {"error": "не найдена таблица с пунктами пропуска"}
+        
+        # Дата данных
+        table_text = target_table.get_text(" ", strip=True)
+        m = re.search(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4}", table_text)
+        date_str = m.group(0) if m else ""
+        
+        def row_cells(row):
+            tds = row.find_all("td")
+            vals = [td.get_text(" ", strip=True) for td in tds]
+            return vals[1:7] if len(vals) > 1 else []
+        
+        data_rows = []
+        update_row = None
+        for r in target_table.find_all("tr"):
+            low = r.get_text(" ", strip=True).lower()
+            if "обновлени" in low or "aktualizacji" in low:
+                update_row = r
+                continue
+            if "примерное время" in low or "szacunkowy czas" in low:
+                data_rows.append(r)
+        
+        # Порядок строк: грузовики, автобусы, легковые
+        if len(data_rows) < 3:
+            return {"error": "не удалось разобрать строки таблицы"}
+        
+        trucks_vals = row_cells(data_rows[0])
+        buses_vals = row_cells(data_rows[1])
+        cars_vals = row_cells(data_rows[2])
+        upd_vals = row_cells(update_row) if update_row else []
+        
+        result = {"date": date_str, "cars": {}, "trucks": {}, "buses": {}, "updated": {}}
+        for i, key in enumerate(PL_CHECKPOINTS):
+            result["trucks"][key] = trucks_vals[i] if i < len(trucks_vals) else ""
+            result["buses"][key] = buses_vals[i] if i < len(buses_vals) else ""
+            result["cars"][key] = cars_vals[i] if i < len(cars_vals) else ""
+            result["updated"][key] = upd_vals[i] if i < len(upd_vals) else ""
+        
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ==========================================
 # ФОНОВЫЙ СБОРЩИК СТАТИСТИКИ ПО ВСЕМ ЗОНАМ
 # ==========================================
 def stats_collector_loop():
@@ -1016,6 +1119,9 @@ def admin_panel(message):
     markup.add(
         telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
     )
+    markup.add(
+        telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"),
+    )
     
     bot.send_message(
         message.chat.id,
@@ -1143,6 +1249,9 @@ def handle_admin_back(call):
     markup.add(
         telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
     )
+    markup.add(
+        telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"),
+    )
     
     bot.edit_message_text(
         f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
@@ -1224,6 +1333,51 @@ def handle_chart_period(call):
         except Exception:
             pass
         gc.collect()
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_pl")
+def handle_admin_pl(call):
+    chat_id = call.message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        return
+    
+    bot.answer_callback_query(call.id, "🇵🇱 Запрашиваю данные с granica.gov.pl...")
+    
+    data = fetch_poland_waiting_times()
+    if "error" in data:
+        bot.send_message(chat_id, f"❌ Не удалось получить данные Польши: {data['error']}")
+        return
+    
+    lines = []
+    lines.append("🇵🇱 <b>Польша: время ожидания (выезд из РП)</b>")
+    if data.get("date"):
+        lines.append(f"📅 Данные на: {html.escape(data['date'])}")
+    lines.append("")
+    lines.append("🚗 <b>Легковые:</b>")
+    for key in ["terespol", "bobrowniki", "kuznica"]:
+        val = data["cars"].get(key, "")
+        upd = data["updated"].get(key, "")
+        by = PL_TO_BY.get(key, "")
+        if val:
+            upd_text = f" (обн. {upd})" if upd else ""
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
+        else:
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
+    lines.append("")
+    lines.append("🚚 <b>Грузовики:</b>")
+    for key in ["terespol", "bobrowniki", "kuznica", "koroszczyn"]:
+        val = data["trucks"].get(key, "")
+        upd = data["updated"].get(key, "")
+        by = PL_TO_BY.get(key, "")
+        if val:
+            upd_text = f" (обн. {upd})" if upd else ""
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
+        else:
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
+    lines.append("")
+    lines.append("💡 Данные обновляются 8 раз в сутки")
+    
+    bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
 
 
 def show_users_inline(message):
