@@ -655,10 +655,12 @@ def fetch_poland_waiting_times():
         soup = BeautifulSoup(resp.text, "html.parser")
         
         # Ищем таблицу с пунктами пропуска (Беларусь)
+        # Используем устойчивые названия: Тересполь и Бобровники
+        # (на ru-версии сайта Kuźnica переведена как "Металлургический завод")
         target_table = None
         for table in soup.find_all("table"):
             text = table.get_text(" ", strip=True).lower()
-            if ("тересполь" in text or "terespol" in text) and ("куз" in text or "kuźnica" in text or "kuznica" in text):
+            if ("тересполь" in text or "terespol" in text) and ("бобровники" in text or "bobrowniki" in text):
                 target_table = table
                 break
         
