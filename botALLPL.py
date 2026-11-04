@@ -65,25 +65,25 @@ except Exception as e:
     sys.stdout.flush()
     sys.exit(1)
 
-# --- Зоны ожидания (ОБНОВЛЁННЫЕ API) ---
+# --- Зоны ожидания (СТАБИЛЬНЫЙ API) ---
 ZONES = {
     "brest": {
         "name": "Брест",
         "url": "https://mon.declarant.by/#/zone/brest-bts",
         "checkpoint_id": "a9173a85-3fc0-424c-84f0-defa632481e4",
-        "base_url": "https://mon.declarant.by/api",
+        "base_url": "https://belarusborder.by/info",
     },
     "berestovitsa": {
         "name": "Берестовица",
         "url": "https://mon.declarant.by/#/zone/berestovitsa",
         "checkpoint_id": "7e46a2d1-ab2f-11ec-bafb-ac1f6bf889c1",
-        "base_url": "https://mon.declarant.by/api",
+        "base_url": "https://belarusborder.by/info",
     },
     "bruzgi": {
         "name": "Брузги",
         "url": "https://mon.declarant.by/#/zone/bruzgi",
         "checkpoint_id": "3b797d4d-706a-440f-a1a4-826c191e1e36",
-        "base_url": "https://mon.declarant.by/api",
+        "base_url": "https://belarusborder.by/info",
     },
 }
 
@@ -381,7 +381,7 @@ def _safe_json(response):
 
 
 # ==========================================
-# ОБНОВЛЁННЫЙ ЗАПРОС ДАННЫХ (НОВЫЙ API + СТРАХОВКА)
+# ЗАПРОС ДАННЫХ (СТАБИЛЬНЫЙ API + ЧЁТКИЕ ОШИБКИ)
 # ==========================================
 def fetch_data(zone_key: str = "brest"):
     try:
@@ -398,40 +398,28 @@ def fetch_data(zone_key: str = "brest"):
             "Referer": "https://mon.declarant.by/",
         }
 
-        stats_url = f"{BASE}/monitoring/statistics"
-        queue_url = f"{BASE}/monitoring-new"
-
-        stats = _safe_json(session_req.get(
-            stats_url,
+        # Запрашиваем статистику
+        stats_resp = session_req.get(
+            f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=no_proxy,
             headers=headers,
-        ))
+        )
+        stats = _safe_json(stats_resp)
         
-        # Страховка: если новый API вернул ошибку или пустоту, пробуем старый
-        if not stats or "error" in str(stats).lower() or (not stats.get("carLastHour") and not stats.get("carLastDay")):
-            BASE = "https://belarusborder.by/info"
-            stats_url = f"{BASE}/monitoring/statistics"
-            queue_url = f"{BASE}/monitoring-new"
-            stats = _safe_json(session_req.get(
-                stats_url,
-                params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
-                timeout=20,
-                proxies=no_proxy,
-                headers=headers,
-            ))
-
-        queue = _safe_json(session_req.get(
-            queue_url,
+        # Запрашиваем очередь
+        queue_resp = session_req.get(
+            f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=no_proxy,
             headers=headers,
-        ))
+        )
+        queue = _safe_json(queue_resp)
         
-        if not queue:
-            return {"error": "API очереди вернул пустой ответ"}
+        if not queue or "error" in str(queue).lower():
+            return {"error": f"API не вернул данные очереди. Ответ: {str(queue)[:100]}"}
 
         cars = queue.get("carLiveQueue", []) or []
         
