@@ -7,7 +7,6 @@ import threading
 import time
 import sys
 import gc
-import re
 from flask import Flask
 from io import BytesIO
 
@@ -19,12 +18,6 @@ try:
     CHARTS_AVAILABLE = True
 except Exception:
     CHARTS_AVAILABLE = False
-
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except Exception:
-    BS4_AVAILABLE = False
 
 import requests
 import telebot
@@ -65,7 +58,7 @@ except Exception as e:
     sys.stdout.flush()
     sys.exit(1)
 
-# --- Зоны ожидания (СТАБИЛЬНЫЙ API) ---
+# --- Зоны ожидания ---
 ZONES = {
     "brest": {
         "name": "Брест",
@@ -85,23 +78,6 @@ ZONES = {
         "checkpoint_id": "3b797d4d-706a-440f-a1a4-826c191e1e36",
         "base_url": "https://belarusborder.by/info",
     },
-}
-
-# --- Польские пункты пропуска ---
-PL_CHECKPOINTS = ["kuznica", "bobrowniki", "polowce", "koroszczyn", "terespol", "slawatycze"]
-PL_NAMES_RU = {
-    "kuznica": "Кузьница",
-    "bobrowniki": "Бобровники",
-    "polowce": "Половце",
-    "koroszczyn": "Корощин",
-    "terespol": "Тересполь",
-    "slawatycze": "Славатыче",
-}
-PL_TO_BY = {
-    "terespol": "Брест",
-    "bobrowniki": "Берестовица",
-    "kuznica": "Брузги",
-    "koroszczyn": "Козловичи",
 }
 
 sessions_lock = threading.Lock()
@@ -380,9 +356,6 @@ def _safe_json(response):
         return {}
 
 
-# ==========================================
-# ЗАПРОС ДАННЫХ (СТАБИЛЬНЫЙ API + ЧЁТКИЕ ОШИБКИ)
-# ==========================================
 def fetch_data(zone_key: str = "brest"):
     try:
         zone = ZONES.get(zone_key, ZONES["brest"])
@@ -398,28 +371,22 @@ def fetch_data(zone_key: str = "brest"):
             "Referer": "https://mon.declarant.by/",
         }
 
-        # Запрашиваем статистику
-        stats_resp = session_req.get(
+        stats = _safe_json(session_req.get(
             f"{BASE}/monitoring/statistics",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=no_proxy,
             headers=headers,
-        )
-        stats = _safe_json(stats_resp)
-        
-        # Запрашиваем очередь
-        queue_resp = session_req.get(
+        ))
+        queue = _safe_json(session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=no_proxy,
             headers=headers,
-        )
-        queue = _safe_json(queue_resp)
-        
-        if not queue or "error" in str(queue).lower():
-            return {"error": f"API не вернул данные очереди. Ответ: {str(queue)[:100]}"}
+        ))
+        if not queue:
+            return {"error": "API очереди вернул пустой ответ"}
 
         cars = queue.get("carLiveQueue", []) or []
         
@@ -637,104 +604,6 @@ def build_queue_chart(hours: int):
 
 
 # ==========================================
-# ДАННЫЕ ПОЛЬСКОЙ СТОРОНЫ (granica.gov.pl)
-# ==========================================
-def fetch_poland_waiting_times():
-    """Получает время ожидания на польских пунктах пропуска (выезд из РП)"""
-    if not BS4_AVAILABLE:
-        return {"error": "beautifulsoup4 не установлен на сервере"}
-    
-    urls = [
-        "https://granica.gov.pl/index.php/pl/?option=com_content&view=article&id=207&p=b&c=t&v=pl&k=w",
-        "https://granica.gov.pl/index.php/ru/?option=com_content&view=article&id=207&p=b&c=t&v=ru&k=w",
-        "https://granica.gov.pl/index_wait.php?v=pl",
-    ]
-    
-    try:
-        session_req = requests.Session()
-        session_req.trust_env = False
-        no_proxy = {"http": None, "https": None}
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "pl,en;q=0.9,ru;q=0.8",
-        }
-        
-        try:
-            session_req.get("https://granica.gov.pl/", timeout=15, proxies=no_proxy, headers=headers)
-        except Exception:
-            pass
-        
-        diag = []
-        for url in urls:
-            short_url = url.split("?")[0]
-            try:
-                resp = session_req.get(url, timeout=20, proxies=no_proxy, headers=headers)
-                page = resp.text
-                page_low = page.lower()
-                soup = BeautifulSoup(page, "html.parser")
-                tables = soup.find_all("table")
-                has_terespol = ("тересполь" in page_low or "terespol" in page_low)
-                diag.append(f"{short_url}: статус={resp.status_code}, таблиц={len(tables)}, Тересполь={has_terespol}")
-                
-                if not has_terespol:
-                    continue
-                
-                candidates = []
-                for table in tables:
-                    text = table.get_text(" ", strip=True).lower()
-                    if ("тересполь" in text or "terespol" in text):
-                        candidates.append((table, text))
-                if not candidates:
-                    continue
-                candidates.sort(key=lambda pair: len(pair[0].find_all("tr")), reverse=True)
-                target_table, table_text = candidates[0]
-                
-                m = re.search(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4}", table_text)
-                date_str = m.group(0) if m else ""
-                
-                def row_cells(row):
-                    tds = row.find_all("td")
-                    vals = [td.get_text(" ", strip=True) for td in tds]
-                    return vals[1:7] if len(vals) > 1 else []
-                
-                data_rows = []
-                update_row = None
-                for r in target_table.find_all("tr"):
-                    low = r.get_text(" ", strip=True).lower()
-                    if "обновлени" in low or "aktualizacji" in low:
-                        update_row = r
-                        continue
-                    if "примерное время" in low or "szacunkowy czas" in low or "[ч]" in low or "[h]" in low:
-                        data_rows.append(r)
-                
-                if len(data_rows) < 3:
-                    diag.append(f"{short_url}: строк данных={len(data_rows)}")
-                    continue
-                
-                trucks_vals = row_cells(data_rows[0])
-                buses_vals = row_cells(data_rows[1])
-                cars_vals = row_cells(data_rows[2])
-                upd_vals = row_cells(update_row) if update_row else []
-                
-                result = {"date": date_str, "cars": {}, "trucks": {}, "buses": {}, "updated": {}}
-                for i, key in enumerate(PL_CHECKPOINTS):
-                    result["trucks"][key] = trucks_vals[i] if i < len(trucks_vals) else ""
-                    result["buses"][key] = buses_vals[i] if i < len(buses_vals) else ""
-                    result["cars"][key] = cars_vals[i] if i < len(cars_vals) else ""
-                    result["updated"][key] = upd_vals[i] if i < len(upd_vals) else ""
-                
-                return result
-            except Exception as e:
-                diag.append(f"{short_url}: ошибка={e}")
-                continue
-        
-        return {"error": "не найдена таблица. Диагностика: " + " | ".join(diag)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ==========================================
 # ФОНОВЫЙ СБОРЩИК СТАТИСТИКИ ПО ВСЕМ ЗОНАМ
 # ==========================================
 def stats_collector_loop():
@@ -745,6 +614,7 @@ def stats_collector_loop():
     while True:
         try:
             iteration += 1
+            
             if iteration % 5 == 0:
                 sys.stdout.write(f"💓 [STATS] Сборщик жив, собрано {iteration} циклов\n")
                 sys.stdout.flush()
@@ -771,6 +641,7 @@ def stats_collector_loop():
             sys.stdout.write(f"⏳ [STATS] Следующий сбор через 30 минут...\n")
             sys.stdout.flush()
             time.sleep(1800)
+                
         except Exception as e:
             sys.stdout.write(f"❌ [STATS] КРИТИЧЕСКАЯ ОШИБКА в сборщике: {e}\n")
             sys.stdout.write(f"🔄 [STATS] Перезапуск через 60 секунд...\n")
@@ -788,11 +659,13 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
     iteration = 0
     consecutive_errors = 0
     max_consecutive_errors = 3
-    urgent_mode = False
+    
+    urgent_mode = False  # Флаг ускоренного режима
     
     while not stop_event.is_set():
         try:
             iteration += 1
+            
             if iteration % 10 == 0:
                 mode_text = "🚨 Машина в ПП (30 сек)" if urgent_mode else f"обычный ({interval} мин)"
                 sys.stdout.write(f"💓 [BOT] Поток {chat_id} жив (итерация {iteration}, режим: {mode_text})\n")
@@ -815,6 +688,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                     except:
                         pass
                     break
+                
                 time.sleep(60)
                 continue
             
@@ -827,6 +701,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 alarm_enabled = session.get("alarm_enabled", False)
             
             avg_hour, avg_day, history_count = get_average_stats(zone_key, hours=avg_period)
+            
             estimate = calculate_estimate(data["total"], avg_hour, avg_day)
             data["estimate"] = estimate
             
@@ -835,6 +710,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 session = sessions.get(chat_id, {})
                 session["last_cars"] = cars
 
+            # Проверяем статус фильтрованной машины для умной сирены
             is_called = False
             if current_filter and alarm_enabled and cars:
                 search_query = current_filter.replace(" ", "").lower()
@@ -850,6 +726,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                             is_called = True
                         break
             
+            # Логика переключения режимов
             if is_called and not urgent_mode:
                 urgent_mode = True
                 try:
@@ -862,6 +739,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 except Exception as e:
                     sys.stdout.write(f"⚠️ [BOT] Ошибка отправки уведомления: {e}\n")
                     sys.stdout.flush()
+                    
             elif not is_called and urgent_mode:
                 urgent_mode = False
                 try:
@@ -887,6 +765,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 sys.stdout.write(f"⚠️ [BOT] Ошибка отправки: {e}\n")
                 sys.stdout.flush()
 
+            # Ждем интервал (в секундах)
             sleep_time = 30 if urgent_mode else interval * 60
             for _ in range(int(sleep_time)):
                 if stop_event.is_set():
@@ -904,6 +783,7 @@ def monitoring_loop(chat_id: int, stop_event: threading.Event, interval: int, zo
                 except:
                     pass
                 break
+            
             time.sleep(60)
     
     sys.stdout.write(f"🛑 [BOT] Поток мониторинга для {chat_id} завершен (итераций: {iteration})\n")
@@ -917,6 +797,7 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     with sessions_lock:
+        # Сначала останавливаем старый поток если есть
         session = sessions.get(chat_id)
         if session:
             old_thread = session.get("thread")
@@ -1123,11 +1004,18 @@ def admin_panel(message):
     update_user_activity(message.chat.id)
     
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"))
-    markup.add(telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"))
-    markup.add(telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"))
-    markup.add(telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"))
-    markup.add(telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"))
+    markup.add(
+        telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
+    )
     
     bot.send_message(
         message.chat.id,
@@ -1158,7 +1046,9 @@ def handle_admin_avg(call):
     markup.add(
         telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"),
     )
-    markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+    markup.add(
+        telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
+    )
     
     bot.edit_message_text(
         f"📊 <b>Период усреднения для расчёта оценки</b>\n\n"
@@ -1178,6 +1068,7 @@ def handle_admin_users(call):
     chat_id = call.message.chat.id
     if chat_id != ADMIN_CHAT_ID:
         return
+    
     show_users_inline(call.message)
 
 
@@ -1188,6 +1079,7 @@ def handle_admin_backup(call):
         return
     
     bot.answer_callback_query(call.id, "📦 Создание бэкапа...")
+    
     try:
         with open("bot_users.db", "rb") as db_file:
             bot.send_document(
@@ -1202,17 +1094,34 @@ def handle_admin_backup(call):
                         f"3. Задеплойте на Render",
                 parse_mode="HTML"
             )
+        
         bot.edit_message_text(
             "✅ <b>Бэкап базы данных отправлен!</b>\n\n"
-            "Файл bot_users.db содержит историю статистики и настройки.",
+            "Файл bot_users.db содержит:\n"
+            "• Историю статистики по всем зонам\n"
+            "• Список пользователей\n"
+            "• Настройки мониторинга\n\n"
+            "Сохраните его для восстановления после изменений.",
             chat_id=chat_id,
             message_id=call.message.message_id,
             parse_mode="HTML"
         )
+        
     except FileNotFoundError:
-        bot.edit_message_text("❌ <b>Ошибка:</b> Файл базы данных не найден!", chat_id=chat_id, message_id=call.message.message_id, parse_mode="HTML")
+        bot.edit_message_text(
+            "❌ <b>Ошибка:</b> Файл базы данных не найден!\n\n"
+            "Убедитесь, что бот уже работал и создал базу.",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
     except Exception as e:
-        bot.edit_message_text(f"❌ <b>Ошибка при создании бэкапа:</b> {e}", chat_id=chat_id, message_id=call.message.message_id, parse_mode="HTML")
+        bot.edit_message_text(
+            f"❌ <b>Ошибка при создании бэкапа:</b> {e}",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_back")
@@ -1222,11 +1131,18 @@ def handle_admin_back(call):
         return
     
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"))
-    markup.add(telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"))
-    markup.add(telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"))
-    markup.add(telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"))
-    markup.add(telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"))
+    markup.add(
+        telebot.types.InlineKeyboardButton("📊 Период усреднения", callback_data="admin_avg"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("💾 Бэкап базы", callback_data="admin_backup"),
+    )
+    markup.add(
+        telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
+    )
     
     bot.edit_message_text(
         f"⚙️ <b>Админ-панель</b>\n\nВыберите действие:",
@@ -1252,7 +1168,9 @@ def handle_admin_chart(call):
         telebot.types.InlineKeyboardButton("72 часа", callback_data="chart_72"),
         telebot.types.InlineKeyboardButton("10 дней", callback_data="chart_240"),
     )
-    markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+    markup.add(
+        telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
+    )
     
     bot.edit_message_text(
         "📈 <b>График очереди</b>\n\nВыберите период для построения графика:",
@@ -1308,53 +1226,9 @@ def handle_chart_period(call):
         gc.collect()
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "admin_pl")
-def handle_admin_pl(call):
-    chat_id = call.message.chat.id
-    if chat_id != ADMIN_CHAT_ID:
-        return
-    
-    bot.answer_callback_query(call.id, "🇵🇱 Запрашиваю данные с granica.gov.pl...")
-    
-    data = fetch_poland_waiting_times()
-    if "error" in data:
-        bot.send_message(chat_id, f"❌ Не удалось получить данные Польши: {data['error']}")
-        return
-    
-    lines = []
-    lines.append("🇵🇱 <b>Польша: время ожидания (выезд из РП)</b>")
-    if data.get("date"):
-        lines.append(f"📅 Данные на: {html.escape(data['date'])}")
-    lines.append("")
-    lines.append("🚗 <b>Легковые:</b>")
-    for key in ["terespol", "bobrowniki", "kuznica"]:
-        val = data["cars"].get(key, "")
-        upd = data["updated"].get(key, "")
-        by = PL_TO_BY.get(key, "")
-        if val:
-            upd_text = f" (обн. {upd})" if upd else ""
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
-        else:
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
-    lines.append("")
-    lines.append("🚚 <b>Грузовики:</b>")
-    for key in ["terespol", "bobrowniki", "kuznica", "koroszczyn"]:
-        val = data["trucks"].get(key, "")
-        upd = data["updated"].get(key, "")
-        by = PL_TO_BY.get(key, "")
-        if val:
-            upd_text = f" (обн. {upd})" if upd else ""
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
-        else:
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
-    lines.append("")
-    lines.append("💡 Данные обновляются 8 раз в сутки")
-    
-    bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
-
-
 def show_users_inline(message):
     chat_id = message.chat.id
+    
     with db_lock:
         conn = sqlite3.connect("bot_users.db")
         cursor = conn.cursor()
@@ -1368,6 +1242,7 @@ def show_users_inline(message):
 
     markup = telebot.types.InlineKeyboardMarkup()
     text = f"👥 <b>Пользователи ({len(rows)}):</b>\n\n"
+    
     now = datetime.now()
     
     for row in rows:
@@ -1382,29 +1257,41 @@ def show_users_inline(message):
                 if diff.total_seconds() < 60:
                     activity_status = "🟢 Только что"
                 elif diff.total_seconds() < 3600:
-                    activity_status = f"🟢 {int(diff.total_seconds() / 60)} мин назад"
+                    mins = int(diff.total_seconds() / 60)
+                    activity_status = f"🟢 {mins} мин назад"
                 elif diff.total_seconds() < 86400:
-                    activity_status = f"🟡 {int(diff.total_seconds() / 3600)} ч назад"
+                    hours = int(diff.total_seconds() / 3600)
+                    activity_status = f"🟡 {hours} ч назад"
                 else:
-                    activity_status = f"🔴 {int(diff.total_seconds() / 86400)} дн назад"
+                    days = int(diff.total_seconds() / 86400)
+                    activity_status = f"🔴 {days} дн назад"
             except:
                 activity_status = "⚪ Неизвестно"
         else:
             activity_status = "⚪ Неизвестно"
         
         status_icon = "🔴 Заблок." if is_blocked == 1 else "✅ Активен"
+        
         text += f"• <b>{html.escape(name)}</b> ({uname})\n"
         text += f"  ID: <code>{user_chat_id}</code>\n"
         text += f"  {status_icon} | {activity_status} | {message_count} сообщ.\n\n"
         
         if user_chat_id != ADMIN_CHAT_ID:
             if is_blocked == 0:
-                markup.add(telebot.types.InlineKeyboardButton(f"🚫 Заблокировать {first_name}", callback_data=f"block_{user_chat_id}"))
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f"🚫 Заблокировать {first_name}", callback_data=f"block_{user_chat_id}"
+                ))
             else:
-                markup.add(telebot.types.InlineKeyboardButton(f"✅ Разблокировать {first_name}", callback_data=f"unblock_{user_chat_id}"))
-            markup.add(telebot.types.InlineKeyboardButton(f"🗑️ Удалить {first_name}", callback_data=f"delete_{user_chat_id}"))
+                markup.add(telebot.types.InlineKeyboardButton(
+                    f"✅ Разблокировать {first_name}", callback_data=f"unblock_{user_chat_id}"
+                ))
+            
+            markup.add(telebot.types.InlineKeyboardButton(
+                f"🗑️ Удалить {first_name}", callback_data=f"delete_{user_chat_id}"
+            ))
     
     markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад в админ-панель", callback_data="admin_back"))
+
     bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
 
@@ -1413,24 +1300,41 @@ def handle_avg_period(call):
     chat_id = call.message.chat.id
     if chat_id != ADMIN_CHAT_ID:
         return
+    
     try:
         new_period = int(call.data.replace("avg_", ""))
+        
         with sessions_lock:
             if chat_id in sessions:
                 sessions[chat_id]["avg_period"] = new_period
             else:
                 sessions[chat_id] = {"avg_period": new_period}
+        
         bot.answer_callback_query(call.id, f"✅ Период изменён на {new_period} ч")
         
         markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(telebot.types.InlineKeyboardButton("6 часов", callback_data="avg_6"), telebot.types.InlineKeyboardButton("12 часов", callback_data="avg_12"))
-        markup.add(telebot.types.InlineKeyboardButton("24 часа (по умолч.)", callback_data="avg_24"), telebot.types.InlineKeyboardButton("48 часов", callback_data="avg_48"))
-        markup.add(telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"))
-        markup.add(telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+        markup.add(
+            telebot.types.InlineKeyboardButton("6 часов", callback_data="avg_6"),
+            telebot.types.InlineKeyboardButton("12 часов", callback_data="avg_12"),
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("24 часа (по умолч.)", callback_data="avg_24"),
+            telebot.types.InlineKeyboardButton("48 часов", callback_data="avg_48"),
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("72 часа (3 суток)", callback_data="avg_72"),
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"),
+        )
         
         bot.edit_message_text(
-            f"✅ <b>Период усреднения изменён на {new_period} часов</b>\n\nСледующий отчёт будет рассчитан на основе данных за последние {new_period} ч.",
-            chat_id=chat_id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML"
+            f"✅ <b>Период усреднения изменён на {new_period} часов</b>\n\n"
+            f"Следующий отчёт будет рассчитан на основе данных за последние {new_period} ч.",
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML"
         )
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
@@ -1440,6 +1344,7 @@ def handle_avg_period(call):
 def handle_user_action(call):
     if call.message.chat.id != ADMIN_CHAT_ID:
         return
+    
     try:
         action, chat_id_str = call.data.split("_")
         target_chat_id = int(chat_id_str)
@@ -1451,23 +1356,28 @@ def handle_user_action(call):
                 cursor.execute("DELETE FROM users WHERE chat_id = ?", (target_chat_id,))
                 conn.commit()
                 conn.close()
+            
             stop_monitoring(target_chat_id)
             bot.answer_callback_query(call.id, "✅ Пользователь удалён!")
         else:
             new_status = 1 if action == "block" else 0
+
             with db_lock:
                 conn = sqlite3.connect("bot_users.db")
                 cursor = conn.cursor()
                 cursor.execute("UPDATE users SET is_blocked = ? WHERE chat_id = ?", (new_status, target_chat_id))
                 conn.commit()
                 conn.close()
+
             if new_status == 1:
                 stop_monitoring(target_chat_id)
                 try:
                     bot.send_message(target_chat_id, "❌ Администратор ограничил вам доступ к боту.")
                 except:
                     pass
+
             bot.answer_callback_query(call.id, "✅ Статус пользователя изменен!")
+        
         show_users_inline(call.message)
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
@@ -1496,8 +1406,13 @@ def set_preset_interval(call):
     
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     zone_name = get_zone_name(zone_key)
-    bot.send_message(chat_id, f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n🌍 Зона: {zone_name}", reply_markup=get_main_keyboard(alarm_on, chat_id))
+    bot.send_message(
+        chat_id,
+        f"✅ Запуск: каждые {interval} минут. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
+    )
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "int_custom")
@@ -1546,7 +1461,12 @@ def process_custom_step(message):
     zone_name = get_zone_name(zone_key)
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
-    bot.send_message(chat_id, f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...\n🌍 Зона: {zone_name}", reply_markup=get_main_keyboard(alarm_on, chat_id))
+
+    bot.send_message(
+        chat_id,
+        f"✅ Запуск: каждые {minutes} мин. Первый отчет отправляется...\n🌍 Зона: {zone_name}",
+        reply_markup=get_main_keyboard(alarm_on, chat_id),
+    )
 
 
 @bot.message_handler(commands=["stop"])
@@ -1573,6 +1493,7 @@ def enable_alarm(message):
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["alarm_enabled"] = True
         sessions[chat_id]["last_called_state"] = False
+
     bot.reply_to(message, "🔔 <b>Громкая сирена включена!</b>", reply_markup=get_main_keyboard(True, chat_id), parse_mode="HTML")
 
 
@@ -1585,6 +1506,7 @@ def disable_alarm(message):
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["alarm_enabled"] = False
+
     bot.reply_to(message, "🔕 <b>Громкая сирена выключена.</b>", reply_markup=get_main_keyboard(False, chat_id), parse_mode="HTML")
 
 
@@ -1595,6 +1517,7 @@ def ask_car_filter(message):
     update_user_activity(chat_id)
     with sessions_lock:
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
+
     msg = bot.send_message(chat_id, "✍️ Введите гос.номер машины:", reply_markup=get_main_keyboard(alarm_on, chat_id))
     bot.register_next_step_handler(msg, save_car_filter_step)
 
@@ -1603,13 +1526,16 @@ def save_car_filter_step(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
     text = message.text.strip()
+    
     if text.startswith("/"):
         return
+
     with sessions_lock:
         if chat_id not in sessions:
             sessions[chat_id] = {"car_filter": None, "last_cars": [], "alarm_enabled": False, "zone_key": "brest", "avg_period": 24}
         sessions[chat_id]["car_filter"] = text
         alarm_on = sessions[chat_id]["alarm_enabled"]
+
     bot.reply_to(message, f"✅ Фильтр по машине <b>{html.escape(text)}</b> установлен! Включите сирену.", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
 
 
@@ -1618,12 +1544,14 @@ def save_car_filter_step(message):
 def remove_car_filter(message):
     chat_id = message.chat.id
     update_user_activity(chat_id)
+    
     with sessions_lock:
         if chat_id in sessions:
             sessions[chat_id]["car_filter"] = None
             alarm_on = sessions[chat_id].get("alarm_enabled", False)
         else:
             alarm_on = False
+
     bot.reply_to(message, "❌ Фильтр по машине отключен. Мониторинг продолжает работать.", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
 
 
@@ -1631,11 +1559,14 @@ def remove_car_filter(message):
 def handle_car_search(message):
     chat_id = message.chat.id
     text = message.text.strip()
+
     if text.startswith("/"):
         return
+    
     text_lower = text.lower()
     if any(keyword in text_lower for keyword in ["старт", "стоп", "зона", "фильтр", "сирен", "админ"]):
         return
+
     update_user_activity(chat_id)
 
     with sessions_lock:
@@ -1652,6 +1583,7 @@ def handle_car_search(message):
 
     for idx, car in enumerate(cars, start=1):
         car_number = str(car.get("regnum") or car.get("number") or car.get("nzp") or car.get("reg_number") or "").replace(" ", "").lower()
+        
         if search_query in car_number or search_query == car_number:
             found_car = car
             position = idx
@@ -1669,18 +1601,25 @@ def handle_car_search(message):
         )
     else:
         response_text = f"❌ Машина <b>{html.escape(text)}</b> не найдена."
+
     bot.reply_to(message, response_text, parse_mode="HTML")
 
 
 # ==================== ЗАПУСК БОТА ====================
+
 def run_telegram_bot():
     sys.stdout.write("🤖 [BOT] Функция run_telegram_bot ЗАПУЩЕНА\n")
     sys.stdout.flush()
+    
     time.sleep(3)
+    
     try:
         sys.stdout.write("🤖 [BOT] Очистка вебхуков...\n")
         sys.stdout.flush()
-        response = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
+        response = requests.get(
+            f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true",
+            timeout=10,
+        )
         sys.stdout.write(f"✅ [BOT] Вебхуки очищены. Статус: {response.status_code}\n")
         sys.stdout.flush()
     except Exception as e:
@@ -1701,6 +1640,7 @@ def run_telegram_bot():
 
 
 def polling_watchdog():
+    """Следит за потоком polling и перезапускает его, если он умер"""
     global bot_thread
     while True:
         time.sleep(30)
