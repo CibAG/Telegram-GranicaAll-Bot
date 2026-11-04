@@ -635,75 +635,96 @@ def fetch_poland_waiting_times():
     if not BS4_AVAILABLE:
         return {"error": "beautifulsoup4 не установлен на сервере"}
     
+    urls = [
+        "https://granica.gov.pl/index.php/ru/?option=com_content&view=article&id=207&p=b&c=t&v=ru&k=w",
+        "https://granica.gov.pl/index.php/pl/?option=com_content&view=article&id=207&p=b&c=t&v=pl&k=w",
+        "https://granica.gov.pl/index_wait.php?v=ru",
+        "https://granica.gov.pl/index_wait.php?v=pl",
+    ]
+    
     try:
         session_req = requests.Session()
         session_req.trust_env = False
         no_proxy = {"http": None, "https": None}
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru,pl;q=0.9,en;q=0.8",
         }
         
-        resp = session_req.get(
-            "https://granica.gov.pl/index_wait.php?v=ru",
-            timeout=20,
-            proxies=no_proxy,
-            headers=headers,
-        )
-        resp.raise_for_status()
+        # Сначала заходим на главную, чтобы получить cookies
+        try:
+            session_req.get("https://granica.gov.pl/", timeout=15, proxies=no_proxy, headers=headers)
+        except Exception:
+            pass
         
-        soup = BeautifulSoup(resp.text, "html.parser")
-        
-        # Ищем таблицу с пунктами пропуска (Беларусь)
-        # Используем устойчивые названия: Тересполь и Бобровники
-        # (на ru-версии сайта Kuźnica переведена как "Металлургический завод")
-        target_table = None
-        for table in soup.find_all("table"):
-            text = table.get_text(" ", strip=True).lower()
-            if ("тересполь" in text or "terespol" in text) and ("бобровники" in text or "bobrowniki" in text):
-                target_table = table
-                break
-        
-        if target_table is None:
-            return {"error": "не найдена таблица с пунктами пропуска"}
-        
-        # Дата данных
-        table_text = target_table.get_text(" ", strip=True)
-        m = re.search(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4}", table_text)
-        date_str = m.group(0) if m else ""
-        
-        def row_cells(row):
-            tds = row.find_all("td")
-            vals = [td.get_text(" ", strip=True) for td in tds]
-            return vals[1:7] if len(vals) > 1 else []
-        
-        data_rows = []
-        update_row = None
-        for r in target_table.find_all("tr"):
-            low = r.get_text(" ", strip=True).lower()
-            if "обновлени" in low or "aktualizacji" in low:
-                update_row = r
+        diag = []
+        for url in urls:
+            short_url = url.split("?")[0]
+            try:
+                resp = session_req.get(url, timeout=20, proxies=no_proxy, headers=headers)
+                page = resp.text
+                page_low = page.lower()
+                soup = BeautifulSoup(page, "html.parser")
+                tables = soup.find_all("table")
+                has_terespol = ("тересполь" in page_low or "terespol" in page_low)
+                diag.append(f"{short_url}: статус={resp.status_code}, таблиц={len(tables)}, Тересполь={has_terespol}")
+                
+                if not has_terespol:
+                    continue
+                
+                # Ищем таблицу с Тересполем и наибольшим числом строк
+                candidates = []
+                for table in tables:
+                    text = table.get_text(" ", strip=True).lower()
+                    if ("тересполь" in text or "terespol" in text):
+                        candidates.append((table, text))
+                if not candidates:
+                    continue
+                candidates.sort(key=lambda pair: len(pair[0].find_all("tr")), reverse=True)
+                target_table, table_text = candidates[0]
+                
+                # Дата данных
+                m = re.search(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4}", table_text)
+                date_str = m.group(0) if m else ""
+                
+                def row_cells(row):
+                    tds = row.find_all("td")
+                    vals = [td.get_text(" ", strip=True) for td in tds]
+                    return vals[1:7] if len(vals) > 1 else []
+                
+                data_rows = []
+                update_row = None
+                for r in target_table.find_all("tr"):
+                    low = r.get_text(" ", strip=True).lower()
+                    if "обновлени" in low or "aktualizacji" in low:
+                        update_row = r
+                        continue
+                    if "примерное время" in low or "szacunkowy czas" in low or "[ч]" in low or "[h]" in low:
+                        data_rows.append(r)
+                
+                if len(data_rows) < 3:
+                    diag.append(f"{short_url}: строк данных={len(data_rows)}")
+                    continue
+                
+                trucks_vals = row_cells(data_rows[0])
+                buses_vals = row_cells(data_rows[1])
+                cars_vals = row_cells(data_rows[2])
+                upd_vals = row_cells(update_row) if update_row else []
+                
+                result = {"date": date_str, "cars": {}, "trucks": {}, "buses": {}, "updated": {}}
+                for i, key in enumerate(PL_CHECKPOINTS):
+                    result["trucks"][key] = trucks_vals[i] if i < len(trucks_vals) else ""
+                    result["buses"][key] = buses_vals[i] if i < len(buses_vals) else ""
+                    result["cars"][key] = cars_vals[i] if i < len(cars_vals) else ""
+                    result["updated"][key] = upd_vals[i] if i < len(upd_vals) else ""
+                
+                return result
+            except Exception as e:
+                diag.append(f"{short_url}: ошибка={e}")
                 continue
-            if "примерное время" in low or "szacunkowy czas" in low:
-                data_rows.append(r)
         
-        # Порядок строк: грузовики, автобусы, легковые
-        if len(data_rows) < 3:
-            return {"error": "не удалось разобрать строки таблицы"}
-        
-        trucks_vals = row_cells(data_rows[0])
-        buses_vals = row_cells(data_rows[1])
-        cars_vals = row_cells(data_rows[2])
-        upd_vals = row_cells(update_row) if update_row else []
-        
-        result = {"date": date_str, "cars": {}, "trucks": {}, "buses": {}, "updated": {}}
-        for i, key in enumerate(PL_CHECKPOINTS):
-            result["trucks"][key] = trucks_vals[i] if i < len(trucks_vals) else ""
-            result["buses"][key] = buses_vals[i] if i < len(buses_vals) else ""
-            result["cars"][key] = cars_vals[i] if i < len(cars_vals) else ""
-            result["updated"][key] = upd_vals[i] if i < len(upd_vals) else ""
-        
-        return result
+        return {"error": "не найдена таблица. Диагностика: " + " | ".join(diag)}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1122,7 +1143,7 @@ def admin_panel(message):
         telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"),
+        telebot.types.InlineKeyboardButton("🇵 Время ожидания (Польша)", callback_data="admin_pl"),
     )
     
     bot.send_message(
@@ -1351,7 +1372,7 @@ def handle_admin_pl(call):
         return
     
     lines = []
-    lines.append("🇵🇱 <b>Польша: время ожидания (выезд из РП)</b>")
+    lines.append("🇵 <b>Польша: время ожидания (выезд из РП)</b>")
     if data.get("date"):
         lines.append(f"📅 Данные на: {html.escape(data['date'])}")
     lines.append("")
