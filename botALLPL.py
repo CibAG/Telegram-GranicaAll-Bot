@@ -635,10 +635,10 @@ def fetch_poland_waiting_times():
     if not BS4_AVAILABLE:
         return {"error": "beautifulsoup4 не установлен на сервере"}
     
+    # РАБОЧИЙ адрес — первый (польская статья с таблицей), остальные — запасные
     urls = [
-        "https://granica.gov.pl/index.php/ru/?option=com_content&view=article&id=207&p=b&c=t&v=ru&k=w",
         "https://granica.gov.pl/index.php/pl/?option=com_content&view=article&id=207&p=b&c=t&v=pl&k=w",
-        "https://granica.gov.pl/index_wait.php?v=ru",
+        "https://granica.gov.pl/index.php/ru/?option=com_content&view=article&id=207&p=b&c=t&v=ru&k=w",
         "https://granica.gov.pl/index_wait.php?v=pl",
     ]
     
@@ -649,7 +649,7 @@ def fetch_poland_waiting_times():
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ru,pl;q=0.9,en;q=0.8",
+            "Accept-Language": "pl,en;q=0.9,ru;q=0.8",
         }
         
         # Сначала заходим на главную, чтобы получить cookies
@@ -1143,7 +1143,7 @@ def admin_panel(message):
         telebot.types.InlineKeyboardButton("📈 График очереди", callback_data="admin_chart"),
     )
     markup.add(
-        telebot.types.InlineKeyboardButton("🇵 Время ожидания (Польша)", callback_data="admin_pl"),
+        telebot.types.InlineKeyboardButton("🇵🇱 Время ожидания (Польша)", callback_data="admin_pl"),
     )
     
     bot.send_message(
@@ -1372,7 +1372,7 @@ def handle_admin_pl(call):
         return
     
     lines = []
-    lines.append("🇵 <b>Польша: время ожидания (выезд из РП)</b>")
+    lines.append("🇵🇱 <b>Польша: время ожидания (выезд из РП)</b>")
     if data.get("date"):
         lines.append(f"📅 Данные на: {html.escape(data['date'])}")
     lines.append("")
