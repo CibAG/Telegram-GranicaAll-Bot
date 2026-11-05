@@ -155,15 +155,68 @@ def init_db():
                 ON border_stats(zone_key, timestamp)
             """)
             
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS monitor_prefs (
+                    chat_id INTEGER PRIMARY KEY,
+                    zone_key TEXT DEFAULT 'brest',
+                    interval_min INTEGER DEFAULT 0,
+                    auto_continue INTEGER DEFAULT 0
+                )
+            """)
+            
             conn.commit()
             conn.close()
-        sys.stdout.write("✅ База данных инициализирована (включая таблицу истории)\n")
+        sys.stdout.write("✅ База данных инициализирована (включая таблицу истории и настроек мониторинга)\n")
         sys.stdout.flush()
     except Exception as e:
         sys.stdout.write(f"⚠️ Ошибка инициализации БД: {e}\n")
         sys.stdout.flush()
 
 init_db()
+
+# ==========================================
+# НАСТРОЙКИ МОНИТОРИНГА (хранятся в базе)
+# ==========================================
+def save_monitor_prefs(chat_id: int, zone_key: str = None, interval_min: int = None, auto_continue: int = None):
+    """Сохраняет настройки мониторинга пользователя в базу"""
+    try:
+        with db_lock:
+            conn = sqlite3.connect("bot_users.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT zone_key, interval_min, auto_continue FROM monitor_prefs WHERE chat_id = ?", (chat_id,))
+            row = cursor.fetchone()
+            z, i, a = row if row else ("brest", 0, 0)
+            if zone_key is not None:
+                z = zone_key
+            if interval_min is not None:
+                i = interval_min
+            if auto_continue is not None:
+                a = auto_continue
+            cursor.execute(
+                "INSERT OR REPLACE INTO monitor_prefs (chat_id, zone_key, interval_min, auto_continue) VALUES (?, ?, ?, ?)",
+                (chat_id, z, i, a)
+            )
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        sys.stdout.write(f"⚠️ Ошибка сохранения настроек мониторинга: {e}\n")
+        sys.stdout.flush()
+
+
+def load_monitor_prefs(chat_id: int):
+    """Читает настройки мониторинга пользователя из базы: (zone_key, interval_min, auto_continue)"""
+    try:
+        with db_lock:
+            conn = sqlite3.connect("bot_users.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT zone_key, interval_min, auto_continue FROM monitor_prefs WHERE chat_id = ?", (chat_id,))
+            row = cursor.fetchone()
+            conn.close()
+        return row
+    except Exception as e:
+        sys.stdout.write(f"⚠️ Ошибка чтения настроек мониторинга: {e}\n")
+        sys.stdout.flush()
+        return None
 
 # ==========================================
 # ФУНКЦИИ ДЛЯ РАБОТЫ С ИСТОРИЕЙ СТАТИСТИКИ
@@ -949,7 +1002,10 @@ def start_monitoring(chat_id: int, interval: int, zone_key: str = "brest") -> bo
             "avg_period": old_avg_period
         }
         thread.start()
-        return True
+    
+    # Запоминаем в базе: мониторинг включён, продолжаем автоматически
+    save_monitor_prefs(chat_id, zone_key=zone_key, interval_min=interval, auto_continue=1)
+    return True
 
 
 def stop_monitoring(chat_id: int) -> bool:
@@ -979,6 +1035,34 @@ def stop_monitoring(chat_id: int) -> bool:
             "avg_period": session.get("avg_period", 24),
         }
         return was_alive
+
+
+def resume_monitoring_from_db():
+    """Возобновляет мониторинг пользователей, у которых он был включён до перезапуска бота"""
+    try:
+        with db_lock:
+            conn = sqlite3.connect("bot_users.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT chat_id, zone_key, interval_min FROM monitor_prefs WHERE auto_continue = 1 AND interval_min > 0")
+            rows = cursor.fetchall()
+            conn.close()
+        
+        for chat_id, zone_key, interval_min in rows:
+            if is_user_blocked(chat_id):
+                continue
+            if zone_key not in ZONES:
+                zone_key = "brest"
+            if start_monitoring(chat_id, interval_min, zone_key):
+                sys.stdout.write(f"✅ [RESUME] Возобновлён мониторинг для {chat_id} ({zone_key}, каждые {interval_min} мин)\n")
+                sys.stdout.flush()
+    except Exception as e:
+        sys.stdout.write(f"⚠️ [RESUME] Ошибка возобновления: {e}\n")
+        sys.stdout.flush()
+
+
+def delayed_resume():
+    time.sleep(10)
+    resume_monitoring_from_db()
 
 
 # ==================== ОБРАБОТЧИКИ ====================
@@ -1070,6 +1154,12 @@ def handle_zone_selection(call):
             saved_alarm = old.get("alarm_enabled", False)
             saved_avg_period = old.get("avg_period", 24)
 
+        # Если в памяти интервала нет — берём из базы (после перезапуска)
+        prefs = load_monitor_prefs(chat_id)
+        auto_continue = bool(prefs and prefs[2])
+        if saved_interval is None and prefs and prefs[1]:
+            saved_interval = prefs[1]
+
         if was_running:
             stop_monitoring(chat_id)
 
@@ -1087,13 +1177,18 @@ def handle_zone_selection(call):
 
         zone_name = get_zone_name(zone_key)
         bot.answer_callback_query(call.id, f"✅ Зона выбрана: {zone_name}")
+        
+        # Запоминаем новую зону в базе
+        save_monitor_prefs(chat_id, zone_key=zone_key)
 
-        if was_running and saved_interval:
+        # Если мониторинг шёл (или шёл до перезапуска) — продолжаем САМИ с тем же интервалом
+        should_auto = was_running or auto_continue
+        if should_auto and saved_interval:
             if start_monitoring(chat_id, saved_interval, zone_key):
                 bot.send_message(
                     chat_id,
                     f"🌍 <b>Зона изменена на: {zone_name}</b>\n"
-                    f"Мониторинг перезапущен (каждые {saved_interval} мин).",
+                    f"▶️ Мониторинг продолжается автоматически (каждые {saved_interval} мин).",
                     reply_markup=get_main_keyboard(saved_alarm, chat_id),
                     parse_mode="HTML",
                 )
@@ -1538,6 +1633,7 @@ def handle_user_action(call):
 
             if new_status == 1:
                 stop_monitoring(target_chat_id)
+                save_monitor_prefs(target_chat_id, auto_continue=0)
                 try:
                     bot.send_message(target_chat_id, "❌ Администратор ограничил вам доступ к боту.")
                 except:
@@ -1645,6 +1741,8 @@ def stop(message):
         alarm_on = sessions.get(chat_id, {}).get("alarm_enabled", False)
 
     if stop_monitoring(chat_id):
+        # Поль сам остановил — не возобновляем автоматически
+        save_monitor_prefs(chat_id, auto_continue=0)
         bot.reply_to(message, "🛑 <b>Мониторинг остановлен.</b>", reply_markup=get_main_keyboard(alarm_on, chat_id), parse_mode="HTML")
     else:
         bot.reply_to(message, "⚠️ Мониторинг не активен.", reply_markup=get_main_keyboard(alarm_on, chat_id))
@@ -1836,6 +1934,11 @@ sys.stdout.write("📊 [STATS] Создание потока для сборщи
 sys.stdout.flush()
 stats_thread = threading.Thread(target=stats_collector_loop, daemon=True)
 stats_thread.start()
+
+sys.stdout.write("⏰ [RESUME] Создание потока возобновления мониторинга...\n")
+sys.stdout.flush()
+resume_thread = threading.Thread(target=delayed_resume, daemon=True)
+resume_thread.start()
 
 sys.stdout.write("✅ БОТ ГОТОВ К РАБОТЕ\n")
 sys.stdout.write("=" * 50 + "\n")
