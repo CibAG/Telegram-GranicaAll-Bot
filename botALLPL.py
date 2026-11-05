@@ -696,6 +696,35 @@ def build_queue_chart(hours: int):
 # ==========================================
 # ДАННЫЕ ПОЛЬСКОЙ СТОРОНЫ (granica.gov.pl)
 # ==========================================
+def format_pl_date(date_str: str) -> str:
+    """Приводит дату к формату дд.мм.гггг (например 05.11.2026)"""
+    if not date_str:
+        return ""
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", date_str)
+    if m:
+        y, mo, d = m.groups()
+        return f"{int(d):02d}.{int(mo):02d}.{y}"
+    m = re.match(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", date_str)
+    if m:
+        d, mo, y = m.groups()
+        return f"{int(d):02d}.{int(mo):02d}.{y}"
+    return date_str
+
+
+def latest_update_time(updated: dict) -> str:
+    """Возвращает самое позднее время обновления среди всех пунктов"""
+    best = ""
+    best_val = -1
+    for v in (updated or {}).values():
+        m = re.match(r"(\d{1,2}):(\d{2})", v or "")
+        if m:
+            val = int(m.group(1)) * 60 + int(m.group(2))
+            if val > best_val:
+                best_val = val
+                best = v
+    return best
+
+
 def fetch_poland_waiting_times():
     """Получает время ожидания на польских пунктах пропуска (выезд из РП)"""
     if not BS4_AVAILABLE:
@@ -710,23 +739,28 @@ def fetch_poland_waiting_times():
             "Accept": "text/html,application/xhtml+xml",
         }
         
-        resp = session_req.get(
+        # Сайт сменил адрес: сначала пробуем новую страницу, старую как запасную
+        urls = [
+            "https://granica.gov.pl/index.php/pl/czasy-oczekiwania/bia%C5%82oru%C5%9B",
             "https://granica.gov.pl/index_wait.php?v=ru",
-            timeout=20,
-            proxies=no_proxy,
-            headers=headers,
-        )
-        resp.raise_for_status()
+        ]
         
-        soup = BeautifulSoup(resp.text, "html.parser")
-        
-        # Ищем таблицу с пунктами пропуска (Беларусь)
         target_table = None
-        for table in soup.find_all("table"):
-            text = table.get_text(" ", strip=True).lower()
-            if ("тересполь" in text or "terespol" in text) and ("бобровники" in text or "bobrowniki" in text):
-                target_table = table
-                break
+        for url in urls:
+            try:
+                resp = session_req.get(url, timeout=20, proxies=no_proxy, headers=headers)
+                if resp.status_code != 200:
+                    continue
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for table in soup.find_all("table"):
+                    text = table.get_text(" ", strip=True).lower()
+                    if ("тересполь" in text or "terespol" in text) and ("бобровники" in text or "bobrowniki" in text):
+                        target_table = table
+                        break
+                if target_table is not None:
+                    break
+            except Exception:
+                continue
         
         if target_table is None:
             return {"error": "не найдена таблица с пунктами пропуска"}
@@ -737,9 +771,12 @@ def fetch_poland_waiting_times():
         date_str = m.group(0) if m else ""
         
         def row_cells(row):
-            tds = row.find_all("td")
-            vals = [td.get_text(" ", strip=True) for td in tds]
-            return vals[1:7] if len(vals) > 1 else []
+            # Берём И td, И th (сайт часть ячеек оформляет как th)
+            cells = row.find_all(["td", "th"])
+            vals = [c.get_text(" ", strip=True) for c in cells]
+            if len(vals) > 6:
+                vals = vals[-6:]
+            return vals
         
         data_rows = []
         update_row = None
@@ -1456,30 +1493,22 @@ def handle_admin_pl(call):
         bot.send_message(chat_id, f"❌ Не удалось получить данные Польши: {data['error']}")
         return
     
+    date_text = format_pl_date(data.get("date", ""))
+    update_text = latest_update_time(data.get("updated", {}))
+    
     lines = []
     lines.append("🇵🇱 <b>Польша: время ожидания (выезд из РП)</b>")
-    if data.get("date"):
-        lines.append(f"📅 Данные на: {html.escape(data['date'])}")
+    if date_text:
+        lines.append(f"📅 Данные на: {html.escape(date_text)}")
+    if update_text:
+        lines.append(f"⏰ Обновлено: {html.escape(update_text)}")
     lines.append("")
     lines.append("🚗 <b>Легковые:</b>")
     for key in ["terespol", "bobrowniki", "kuznica"]:
         val = data["cars"].get(key, "")
-        upd = data["updated"].get(key, "")
         by = PL_TO_BY.get(key, "")
         if val:
-            upd_text = f" (обн. {upd})" if upd else ""
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
-        else:
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
-    lines.append("")
-    lines.append("🚚 <b>Грузовики:</b>")
-    for key in ["terespol", "bobrowniki", "kuznica", "koroszczyn"]:
-        val = data["trucks"].get(key, "")
-        upd = data["updated"].get(key, "")
-        by = PL_TO_BY.get(key, "")
-        if val:
-            upd_text = f" (обн. {upd})" if upd else ""
-            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>")
         else:
             lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
     lines.append("")
