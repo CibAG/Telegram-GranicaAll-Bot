@@ -8,6 +8,7 @@ import time
 import sys
 import gc
 import re
+import hashlib
 from flask import Flask
 from io import BytesIO
 
@@ -380,6 +381,22 @@ def _safe_json(response):
         return {}
 
 
+# ==========================================
+# ЗАГОЛОВКИ ЗАПРОСОВ (как у официального сайта)
+# ==========================================
+def get_border_headers():
+    """Генерирует заголовки так же, как официальный сайт mon.declarant.by"""
+    current_minute = str(int(time.time() // 60))
+    api_token = hashlib.md5((current_minute + "SemenSemenych").encode()).hexdigest()
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://mon.declarant.by",
+        "Referer": "https://mon.declarant.by/",
+        "X-Api-Key": "3224b44dfe045c3db9f69fe4d582dba41f7266f6fdabe764ad13a39befd89cf",
+        "X-Api-Token": api_token,
+    }
+
+
 def fetch_data(zone_key: str = "brest"):
     try:
         zone = ZONES.get(zone_key, ZONES["brest"])
@@ -389,11 +406,7 @@ def fetch_data(zone_key: str = "brest"):
         session_req = requests.Session()
         session_req.trust_env = False
         no_proxy = {"http": None, "https": None}
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://mon.declarant.by",
-            "Referer": "https://mon.declarant.by/",
-        }
+        headers = get_border_headers()
 
         stats = _safe_json(session_req.get(
             f"{BASE}/monitoring/statistics",
@@ -1341,7 +1354,7 @@ def handle_admin_pl(call):
     if chat_id != ADMIN_CHAT_ID:
         return
     
-    bot.answer_callback_query(call.id, "🇵 Запрашиваю данные с granica.gov.pl...")
+    bot.answer_callback_query(call.id, "🇵🇱 Запрашиваю данные с granica.gov.pl...")
     
     data = fetch_poland_waiting_times()
     if "error" in data:
@@ -1356,6 +1369,17 @@ def handle_admin_pl(call):
     lines.append("🚗 <b>Легковые:</b>")
     for key in ["terespol", "bobrowniki", "kuznica"]:
         val = data["cars"].get(key, "")
+        upd = data["updated"].get(key, "")
+        by = PL_TO_BY.get(key, "")
+        if val:
+            upd_text = f" (обн. {upd})" if upd else ""
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): <b>{val} ч</b>{upd_text}")
+        else:
+            lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
+    lines.append("")
+    lines.append("🚚 <b>Грузовики:</b>")
+    for key in ["terespol", "bobrowniki", "kuznica", "koroszczyn"]:
+        val = data["trucks"].get(key, "")
         upd = data["updated"].get(key, "")
         by = PL_TO_BY.get(key, "")
         if val:
