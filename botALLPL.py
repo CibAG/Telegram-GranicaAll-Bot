@@ -1512,7 +1512,7 @@ def handle_admin_pl(call):
         else:
             lines.append(f"• {PL_NAMES_RU[key]} (→ {by}): нет данных")
     lines.append("")
-    lines.append("💡 Данные обновляются 8 раз в сутки")
+    lines.append("💡 Данные обновляются 8 раз в сутки с сайта https://granica.gov.pl/")
     
     bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
 
