@@ -347,7 +347,7 @@ if not API_TOKEN:
     sys.exit(1)
 
 QUERY_TOKEN = config.get("query_token", "test")
-# Полный токен официального сайта (запасной вариант, если test перестанет отдавать очередь)
+# Полный токен официального сайта (запасной вариант, если test не отдаёт очередь)
 FULL_TOKEN = "bts47d5f-6420-4f74-8f78-42e8e4370cc4"
 
 sys.stdout.write("✅ API_TOKEN загружен\n")
@@ -437,14 +437,17 @@ def _safe_json(response):
 
 
 # ==========================================
-# ЗАГОЛОВКИ ЗАПРОСОВ (как у официального сайта)
+# ЗАГОЛОВКИ ЗАПРОСОВ (как у официального сайта + подпись браузера)
 # ==========================================
 def get_border_headers():
-    """Генерирует заголовки так же, как официальный сайт mon.declarant.by"""
+    """Генерирует заголовки так же, как официальный сайт mon.declarant.by,
+    плюс добавляет User-Agent обычного браузера Chrome"""
     current_minute = str(int(time.time() // 60))
     api_token = hashlib.md5((current_minute + "SemenSemenych").encode()).hexdigest()
     return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Origin": "https://mon.declarant.by",
         "Referer": "https://mon.declarant.by/",
         "X-Api-Key": "3224b44dfe045c3db9f69fe4d582dba41f7266f6fdabe764ad13a39befd89cf",
@@ -471,30 +474,42 @@ def fetch_data(zone_key: str = "brest"):
             headers=headers,
         ))
 
-        queue = _safe_json(session_req.get(
+        resp_queue = session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
             timeout=20,
             proxies=no_proxy,
             headers=headers,
-        ))
+        )
+        queue = _safe_json(resp_queue)
 
         # Если с токеном test очередь не пришла — пробуем полный токен сайта
         if not queue or not (queue.get("carLiveQueue") or []):
-            queue_alt = _safe_json(session_req.get(
+            resp_alt = session_req.get(
                 f"{BASE}/monitoring-new",
                 params={"token": FULL_TOKEN, "checkpointId": CHECKPOINT},
                 timeout=20,
                 proxies=no_proxy,
                 headers=headers,
-            ))
+            )
+            queue_alt = _safe_json(resp_alt)
             if queue_alt and (queue_alt.get("carLiveQueue") or []):
                 queue = queue_alt
+                resp_queue = resp_alt
+            else:
+                # ДИАГНОСТИКА: пишем в лог, что именно вернул сервер
+                body_preview = (resp_queue.text or "")[:300].replace("\n", " ")
+                keys_preview = list(queue.keys())[:12] if isinstance(queue, dict) else "-"
+                sys.stdout.write(
+                    f"⚠️ [API] monitoring-new без очереди: status={resp_queue.status_code}, "
+                    f"keys={keys_preview}, body={body_preview}\n"
+                )
+                sys.stdout.flush()
 
         if not queue:
             return {"error": "API очереди вернул пустой ответ"}
 
-        # Если ключа carLiveQueue вообще нет — сайт изменил формат, пишем диагноз в лог
+        # Если ключа carLiveQueue вообще нет — сайт изменил формат
         if "carLiveQueue" not in queue:
             keys = list(queue.keys())[:15]
             sys.stdout.write(f"⚠️ [API] В ответе нет carLiveQueue. Ключи ответа: {keys}\n")
@@ -503,11 +518,11 @@ def fetch_data(zone_key: str = "brest"):
 
         cars = queue.get("carLiveQueue") or []
 
-        # Диагностика: очередь пустая, но поток машин идёт — пишем в лог
+        # Диагностика: очередь пустая, но поток машин идёт
         if not cars:
             dbg_hour = stats.get("carLastHour", 0) or 0
             if dbg_hour > 0:
-                sys.stdout.write(f"⚠️ [API] Очередь пустая, но за час прошло {dbg_hour} маш. Ключи ответа: {list(queue.keys())[:15]}\n")
+                sys.stdout.write(f"⚠️ [API] Очередь пустая, но за час прошло {dbg_hour} маш. (возможно, сервер скрывает очередь от этого IP)\n")
                 sys.stdout.flush()
 
         sorted_cars = []
