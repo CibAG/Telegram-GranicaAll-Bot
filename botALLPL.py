@@ -27,6 +27,12 @@ try:
 except Exception:
     BS4_AVAILABLE = False
 
+try:
+    from curl_cffi import requests as cffi_requests
+    CURL_CFFI_AVAILABLE = True
+except Exception:
+    CURL_CFFI_AVAILABLE = False
+
 import requests
 import telebot
 from dotenv import load_dotenv
@@ -440,8 +446,7 @@ def _safe_json(response):
 # ЗАГОЛОВКИ ЗАПРОСОВ (как у официального сайта + подпись браузера)
 # ==========================================
 def get_border_headers():
-    """Генерирует заголовки так же, как официальный сайт mon.declarant.by,
-    плюс добавляет User-Agent обычного браузера Chrome"""
+    """Генерирует заголовки так же, как официальный сайт mon.declarant.by"""
     current_minute = str(int(time.time() // 60))
     api_token = hashlib.md5((current_minute + "SemenSemenych").encode()).hexdigest()
     return {
@@ -455,47 +460,68 @@ def get_border_headers():
     }
 
 
+def _http_get_json(url, params, headers):
+    """GET-запрос с возвратом (response, json).
+    Сначала пробуем полное подражание браузеру Chrome (curl_cffi),
+    затем обычный requests."""
+    if CURL_CFFI_AVAILABLE:
+        try:
+            resp = cffi_requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=20,
+                impersonate="chrome",
+            )
+            if resp.content:
+                try:
+                    return resp, resp.json()
+                except Exception:
+                    return resp, {}
+        except Exception as e:
+            sys.stdout.write(f"⚠️ [HTTP] curl_cffi не смог, переходим на requests: {e}\n")
+            sys.stdout.flush()
+    
+    session_req = requests.Session()
+    session_req.trust_env = False
+    resp = session_req.get(
+        url,
+        params=params,
+        headers=headers,
+        timeout=20,
+        proxies={"http": None, "https": None},
+    )
+    return resp, _safe_json(resp)
+
+
 def fetch_data(zone_key: str = "brest"):
     try:
         zone = ZONES.get(zone_key, ZONES["brest"])
         BASE = zone["base_url"]
         CHECKPOINT = zone["checkpoint_id"]
-        
-        session_req = requests.Session()
-        session_req.trust_env = False
-        no_proxy = {"http": None, "https": None}
         headers = get_border_headers()
 
-        stats = _safe_json(session_req.get(
+        resp_stats, stats = _http_get_json(
             f"{BASE}/monitoring/statistics",
-            params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
-            timeout=20,
-            proxies=no_proxy,
-            headers=headers,
-        ))
-
-        resp_queue = session_req.get(
-            f"{BASE}/monitoring-new",
-            params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
-            timeout=20,
-            proxies=no_proxy,
-            headers=headers,
+            {"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
+            headers,
         )
-        queue = _safe_json(resp_queue)
 
-        # Если с токеном test очередь не пришла — пробуем полный токен сайта
+        resp_queue, queue = _http_get_json(
+            f"{BASE}/monitoring-new",
+            {"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
+            headers,
+        )
+
+        # Если очередь не пришла — пробуем полный токен сайта
         if not queue or not (queue.get("carLiveQueue") or []):
-            resp_alt = session_req.get(
+            resp_alt, queue_alt = _http_get_json(
                 f"{BASE}/monitoring-new",
-                params={"token": FULL_TOKEN, "checkpointId": CHECKPOINT},
-                timeout=20,
-                proxies=no_proxy,
-                headers=headers,
+                {"token": FULL_TOKEN, "checkpointId": CHECKPOINT},
+                headers,
             )
-            queue_alt = _safe_json(resp_alt)
             if queue_alt and (queue_alt.get("carLiveQueue") or []):
-                queue = queue_alt
-                resp_queue = resp_alt
+                resp_queue, queue = resp_alt, queue_alt
             else:
                 # ДИАГНОСТИКА: пишем в лог, что именно вернул сервер
                 body_preview = (resp_queue.text or "")[:300].replace("\n", " ")
