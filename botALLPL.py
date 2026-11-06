@@ -347,6 +347,8 @@ if not API_TOKEN:
     sys.exit(1)
 
 QUERY_TOKEN = config.get("query_token", "test")
+# Полный токен официального сайта (запасной вариант, если test перестанет отдавать очередь)
+FULL_TOKEN = "bts47d5f-6420-4f74-8f78-42e8e4370cc4"
 
 sys.stdout.write("✅ API_TOKEN загружен\n")
 sys.stdout.write(f"✅ QUERY_TOKEN: {QUERY_TOKEN}\n")
@@ -468,6 +470,7 @@ def fetch_data(zone_key: str = "brest"):
             proxies=no_proxy,
             headers=headers,
         ))
+
         queue = _safe_json(session_req.get(
             f"{BASE}/monitoring-new",
             params={"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
@@ -475,11 +478,38 @@ def fetch_data(zone_key: str = "brest"):
             proxies=no_proxy,
             headers=headers,
         ))
+
+        # Если с токеном test очередь не пришла — пробуем полный токен сайта
+        if not queue or not (queue.get("carLiveQueue") or []):
+            queue_alt = _safe_json(session_req.get(
+                f"{BASE}/monitoring-new",
+                params={"token": FULL_TOKEN, "checkpointId": CHECKPOINT},
+                timeout=20,
+                proxies=no_proxy,
+                headers=headers,
+            ))
+            if queue_alt and (queue_alt.get("carLiveQueue") or []):
+                queue = queue_alt
+
         if not queue:
             return {"error": "API очереди вернул пустой ответ"}
 
-        cars = queue.get("carLiveQueue", []) or []
-        
+        # Если ключа carLiveQueue вообще нет — сайт изменил формат, пишем диагноз в лог
+        if "carLiveQueue" not in queue:
+            keys = list(queue.keys())[:15]
+            sys.stdout.write(f"⚠️ [API] В ответе нет carLiveQueue. Ключи ответа: {keys}\n")
+            sys.stdout.flush()
+            return {"error": f"API изменил формат ответа (ключи: {keys})"}
+
+        cars = queue.get("carLiveQueue") or []
+
+        # Диагностика: очередь пустая, но поток машин идёт — пишем в лог
+        if not cars:
+            dbg_hour = stats.get("carLastHour", 0) or 0
+            if dbg_hour > 0:
+                sys.stdout.write(f"⚠️ [API] Очередь пустая, но за час прошло {dbg_hour} маш. Ключи ответа: {list(queue.keys())[:15]}\n")
+                sys.stdout.flush()
+
         sorted_cars = []
         if cars:
             sorted_cars = sorted(
