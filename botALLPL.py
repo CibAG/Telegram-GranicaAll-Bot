@@ -355,6 +355,8 @@ if not API_TOKEN:
 QUERY_TOKEN = config.get("query_token", "test")
 # Полный токен официального сайта (запасной вариант, если test не отдаёт очередь)
 FULL_TOKEN = "bts47d5f-6420-4f74-8f78-42e8e4370cc4"
+# Заголовок X-Api-Word, который официальный сайт стал отправлять вместе с X-Api-Token
+API_WORD = os.getenv("API_WORD", "887bda87179399124529914412").strip()
 
 sys.stdout.write("✅ API_TOKEN загружен\n")
 sys.stdout.write(f"✅ QUERY_TOKEN: {QUERY_TOKEN}\n")
@@ -449,7 +451,7 @@ def get_border_headers():
     """Генерирует заголовки так же, как официальный сайт mon.declarant.by"""
     current_minute = str(int(time.time() // 60))
     api_token = hashlib.md5((current_minute + "SemenSemenych").encode()).hexdigest()
-    return {
+    headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -458,6 +460,10 @@ def get_border_headers():
         "X-Api-Key": "3224b44dfe045c3db9f69fe4d582dba41f7266f6fdabe764ad13a39befd89cf",
         "X-Api-Token": api_token,
     }
+    # Новый заголовок сайта. Значение можно переопределить переменной окружения API_WORD на Render
+    if API_WORD:
+        headers["X-Api-Word"] = API_WORD
+    return headers
 
 
 def _http_get_json(url, params, headers):
