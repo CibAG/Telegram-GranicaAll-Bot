@@ -9,7 +9,7 @@ import sys
 import gc
 import re
 import hashlib
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from flask import Flask
 from io import BytesIO
 
@@ -490,6 +490,128 @@ def _request_path(url: str, params) -> str:
     return parsed.path + (("?" + parsed.query) if parsed.query else "")
 
 
+# ---------------------------------------------------------------------------
+# Автообновление параметров подписи из JS сайта mon.declarant.by
+# ---------------------------------------------------------------------------
+SITE_URL = "https://mon.declarant.by/"
+
+_notify_last = {}
+_notify_lock = threading.Lock()
+_empty_streak = 0                   # подряд идущих опросов с пустой очередью при идущем потоке
+EMPTY_STREAK_ALERT = 6              # после скольких таких опросов предупредить администратора
+
+
+def notify_admin(kind: str, text: str, cooldown_sec: int = 6 * 3600):
+    """Отправляет служебное сообщение администратору. Один и тот же тип не чаще, чем раз в cooldown_sec."""
+    try:
+        now = time.time()
+        with _notify_lock:
+            if cooldown_sec and now - _notify_last.get(kind, 0) < cooldown_sec:
+                return
+            _notify_last[kind] = now
+        if ADMIN_CHAT_ID:
+            bot.send_message(ADMIN_CHAT_ID, text, parse_mode="HTML")
+    except Exception as e:
+        sys.stdout.write(f"⚠️ [NOTIFY] Не удалось отправить сообщение админу: {e}\n")
+        sys.stdout.flush()
+_params_lock = threading.Lock()
+_params_last_try = 0.0
+_params_next_delay = 0
+PARAMS_RETRY_CHANGED_SEC = 15 * 60   # после неудачи/смены: можно пробовать снова через 15 мин
+PARAMS_RETRY_SAME_SEC = 60 * 60      # параметры не изменились: следующая проверка через час
+
+
+def extract_api_params(js_text: str) -> dict:
+    """Достаёт из JS сайта секрет, сложность (число нулей) и X-Api-Key.
+    Пробелы в регулярках необязательны, чтобы работало и на минифицированном коде."""
+    found = {}
+    m = re.search(r'Date\.now\(\)\s*/\s*1e3\s*/\s*60\)\.toString\(\)\s*\+\s*"([^"]+)"', js_text)
+    if not m:
+        # запасной вариант: секрет из шаблонной строки `SECRET${i}${n}${o}${s}`
+        m = re.search(r'`([^`$]+)\$\{\w+\}\$\{\w+\}\$\{\w+\}\$\{\w+\}`', js_text)
+    if m:
+        found["secret"] = m.group(1)
+    m = re.search(r'"(0+)"\s*===\s*Array\.from\(new Uint8Array', js_text)
+    if m:
+        found["zeros"] = len(m.group(1))
+    m = re.search(r'"X-Api-Key"\s*:\s*"([0-9a-fA-F]{32,})"', js_text)
+    if m:
+        found["key"] = m.group(1)
+    return found
+
+
+def refresh_api_params(force: bool = False) -> bool:
+    """Скачивает JS сайта и обновляет API_SECRET / API_KEY / API_POW_PREFIX.
+    Возвращает True, если значения изменились. Не чаще, чем раз в 15-60 минут."""
+    global API_SECRET, API_KEY, API_POW_PREFIX, _params_last_try, _params_next_delay
+    with _params_lock:
+        now = time.time()
+        if not force and now - _params_last_try < _params_next_delay:
+            return False
+        _params_last_try = now
+        _params_next_delay = PARAMS_RETRY_CHANGED_SEC
+        try:
+            sess = requests.Session()
+            sess.trust_env = False
+            hdr = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept-Language": "ru-RU,ru;q=0.9",
+            }
+            page = sess.get(SITE_URL, headers=hdr, timeout=20, proxies={"http": None, "https": None})
+            scripts = re.findall(r'<script[^>]+src="([^"]+\.js[^"]*)"', page.text)
+            scripts += re.findall(r'<link[^>]+rel="modulepreload"[^>]+href="([^"]+\.js[^"]*)"', page.text)
+            seen, params = set(), {}
+            for src in scripts:
+                if src in seen:
+                    continue
+                seen.add(src)
+                url = urljoin(SITE_URL, src)
+                js = sess.get(url, headers=hdr, timeout=40, proxies={"http": None, "https": None}).text
+                params = extract_api_params(js)
+                if params.get("secret") and params.get("zeros"):
+                    break
+            if not (params.get("secret") and params.get("zeros")):
+                sys.stdout.write(f"⚠️ [PARAMS] Не нашёл параметры подписи в JS сайта (скриптов: {len(seen)})\n")
+                sys.stdout.flush()
+                notify_admin(
+                    "params_missing",
+                    "⚠️ <b>Бот не нашёл параметры подписи в JS сайта</b>\n"
+                    f"Просмотрено скриптов: {len(seen)}\n"
+                    "Сайт, вероятно, изменил структуру кода. Очередь может не работать.\n"
+                    "Пришлите новый main.*.js (ищите intercept и createApiWord), поправим вручную.",
+                )
+                return False
+            new_secret = params["secret"]
+            new_zeros = "0" * params["zeros"]
+            new_key = params.get("key") or API_KEY
+            changed = (new_secret != API_SECRET or new_zeros != API_POW_PREFIX or new_key != API_KEY)
+            if changed:
+                API_SECRET, API_POW_PREFIX, API_KEY = new_secret, new_zeros, new_key
+                sys.stdout.write(f"🔄 [PARAMS] Параметры подписи обновлены из JS сайта: секрет={API_SECRET}, нулей={len(API_POW_PREFIX)}\n")
+                notify_admin(
+                    "params_changed",
+                    "🔄 <b>Сайт сменил параметры подписи, бот подхватил их сам</b>\n"
+                    f"Секрет: <code>{html.escape(API_SECRET)}</code>\n"
+                    f"Нулей в хэше: {len(API_POW_PREFIX)}\n"
+                    "Очередь должна работать. Ничего делать не нужно.",
+                    cooldown_sec=0,
+                )
+            else:
+                _params_next_delay = PARAMS_RETRY_SAME_SEC
+                sys.stdout.write("✅ [PARAMS] Параметры подписи актуальны\n")
+            sys.stdout.flush()
+            return changed
+        except Exception as e:
+            sys.stdout.write(f"⚠️ [PARAMS] Ошибка обновления параметров: {e}\n")
+            sys.stdout.flush()
+            notify_admin(
+                "params_error",
+                f"⚠️ <b>Не удалось скачать JS сайта для проверки параметров</b>\n<code>{html.escape(str(e)[:300])}</code>\n"
+                "Возможно, сайт временно недоступен с сервера. Бот попробует снова позже.",
+            )
+            return False
+
+
 def _http_get_json(url, params, headers):
     """GET-запрос с возвратом (response, json).
     Сначала пробуем полное подражание браузеру Chrome (curl_cffi),
@@ -561,6 +683,16 @@ def fetch_data(zone_key: str = "brest"):
             if queue_alt and (queue_alt.get("carLiveQueue") or []):
                 resp_queue, queue = resp_alt, queue_alt
             else:
+                # Поток машин идёт, а очередь пустая: возможно, сайт сменил секрет подписи
+                if isinstance(stats, dict) and (stats.get("carLastHour", 0) or 0) > 0 and refresh_api_params():
+                    headers = get_border_headers()
+                    resp_retry, queue_retry = _http_get_json(
+                        f"{BASE}/monitoring-new",
+                        {"token": QUERY_TOKEN, "checkpointId": CHECKPOINT},
+                        headers,
+                    )
+                    if queue_retry and (queue_retry.get("carLiveQueue") or []):
+                        resp_queue, queue = resp_retry, queue_retry
                 # ДИАГНОСТИКА: пишем в лог, что именно вернул сервер
                 body_preview = (resp_queue.text or "")[:300].replace("\n", " ")
                 keys_preview = list(queue.keys())[:12] if isinstance(queue, dict) else "-"
@@ -582,10 +714,24 @@ def fetch_data(zone_key: str = "brest"):
 
         cars = queue.get("carLiveQueue") or []
 
+        # Счётчик подряд идущих «пустых» опросов при идущем потоке
+        global _empty_streak
+        if cars:
+            _empty_streak = 0
+
         # Диагностика: очередь пустая, но поток машин идёт
         if not cars:
             dbg_hour = stats.get("carLastHour", 0) or 0
             if dbg_hour > 0:
+                _empty_streak += 1
+                if _empty_streak >= EMPTY_STREAK_ALERT:
+                    notify_admin(
+                        "queue_empty",
+                        f"⚠️ <b>Очередь пустая уже {_empty_streak} опросов подряд, хотя за час прошло {dbg_hour} маш.</b>\n"
+                        "Либо очередь действительно пустая (ночью так бывает), либо сайт поменял что-то помимо секрета "
+                        "(алгоритм подписи или формат). Если на сайте очередь есть, а в боте нет, пришлите свежий cURL и логи.",
+                        cooldown_sec=12 * 3600,
+                    )
                 sys.stdout.write(f"⚠️ [API] Очередь пустая, но за час прошло {dbg_hour} маш. (возможно, сервер скрывает очередь от этого IP)\n")
                 sys.stdout.flush()
 
